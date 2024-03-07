@@ -1,0 +1,50 @@
+exp_name: cifar
+
+classifier:
+  _target_: models.classifier.Classifier
+  backbone:
+    _target_: models.resnet.ResNet50 
+    cifar_head: True
+  args:  
+    num_classes: 10
+    lr: 0.15
+    momentum: 0.9
+    weight_decay: 1e-4
+    max_epochs: 800
+    ckpt_path: cifar_ckpts/cifar_cls_epoch=689_val_acc_cls=0.9594.ckpt
+
+simclr:
+  _target_: models.simclr.SimCLR
+  backbone:
+    _target_: models.resnet.ResNet50 
+    cifar_head: True
+  args:  
+    num_layers: 3
+    mode: train 
+    num_classes: 10
+    lr: 0.15
+    momentum: 0.9
+    weight_decay: 1e-4
+    max_epochs: 800
+    ckpt_path: cifar_ckpts/cifar_simclr_epoch=748_train_loss_ssl=0.5084.ckpt
+
+mmd:
+  _target_: models.mmd.MMD
+  base_model: ${classifier}
+  # base_model: ${simclr}
+  args:
+    n_tests: 100
+    n_perms: 500
+    sample_sizes: [50, 100, 200, 500, 1000]
+    sig_level: 0.05
+    clean_calib: True
+
+cifar_data_module:
+  _target_: utils.data_utils.CIFARDataModule
+  args:
+    cifar10_path: image_data/Cifar10
+    cifar10_1_path: image_data/Cifar10_1/cifar10.1_v4_data.npy
+    mode: supervised
+    batch_size: 256
+    mmd_sample_sizes: ${mmd.args.sample_sizes}
+    mmd_n_tests: ${mmd.args.n_tests}
