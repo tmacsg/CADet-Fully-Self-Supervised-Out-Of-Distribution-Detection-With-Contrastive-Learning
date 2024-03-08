@@ -14,20 +14,18 @@ from lightly.models.utils import deactivate_requires_grad
 from sklearn import metrics
 
 class CADet(pl.LightningModule):
-    def __init__(self, base_model, args):
+    def __init__(self, base_model, val_dataset, args):
         super().__init__()
 
         self.backbone = self._extract_backbone(base_model)
         deactivate_requires_grad(self.backbone)
-        self.val_image_path = args.val_image_path
         self.test_image_sets = args.test_image_sets
         self.n_tests = args.n_tests
         self.n_transforms = args.n_transforms
         self.sample_size_1 = args.sample_size_1
         self.sample_size_2 = args.sample_size_2
 
-        self.val_dataset = ImageFolder(root=self.val_image_path, 
-                                       transform=CADetTransform(num_tranforms=self.n_transforms))
+        self.val_dataset = val_dataset
         self.val_split = [self.sample_size_1, self.sample_size_2, 
                           len(self.val_dataset) - self.sample_size_1- self.sample_size_2]
 
@@ -61,7 +59,7 @@ class CADet(pl.LightningModule):
             X_test_feat = self.backbone(X_test)
             m_in, m_out = self.compute(X_test_feat)
             test_score = m_in + self.gamma * m_out
-            p_value = (torch.sum(test_score.cpu() >= self.scores).item() + 1) / (len(self.scores) + 1)
+            p_value = (torch.sum(test_score.cpu() > self.scores).item() + 1) / (len(self.scores) + 1)
             self.p_value_outputs[key].loc[batch_idx] = [batch_idx, p_value]
             self.m_in[key][batch_idx] = m_in
             self.m_out[key][batch_idx] = m_out
@@ -108,27 +106,27 @@ class CADet(pl.LightningModule):
             m_out = outer_sims.sum() 
             m_outs.append(m_out.item())
 
-        m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms + 1))
-        # m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms - 1))
+        # m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms + 1))
+        m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms - 1))
         m_outs = torch.tensor(m_outs) / (self.n_transforms * self.n_transforms * self.sample_size_1)
         self.gamma = torch.sqrt(torch.var(m_ins) / torch.var(m_outs))
         self.scores = m_ins + self.gamma * m_outs
     
     def compute(self, X_test_feat):
         intra_sim = self._cal_similarity(X_test_feat, X_test_feat)
-        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms + 1)) 
-        # m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms - 1)) 
+        # m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms + 1)) 
+        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms - 1)) 
         outer_sims = torch.vmap(lambda arg: self._cal_similarity(X_test_feat, arg).sum())(self.X_1_feats)
         m_out = outer_sims.sum() / (self.n_transforms * self.n_transforms * self.sample_size_1)
         return m_in, m_out
     
     def save_roc_curve(self):
-        assert 'imagenet' == self.test_image_sets[0]
+        assert 'same_dist' == self.test_image_sets[0]
         plt.figure(figsize=(12, 8))
         aurocs = {}
         p_values = [None] * self.n_tests * 2
         labels = [None] * self.n_tests * 2
-        pvalue_same_dist = self.p_value_outputs['imagenet']['p_value'].to_list()
+        pvalue_same_dist = self.p_value_outputs['same_dist']['p_value'].to_list()
         p_values[:self.n_tests] = pvalue_same_dist
         labels[:self.n_tests] = [0] * self.n_tests
         labels[self.n_tests:] = [1] * self.n_tests

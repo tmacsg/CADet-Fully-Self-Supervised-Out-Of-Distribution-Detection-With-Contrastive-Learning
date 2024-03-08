@@ -42,19 +42,19 @@ mmd:
 
 cadet:
   _target_: models.cadet.CADet
-  base_model: ${classifier}
-  # base_model: ${simclr}
+  # base_model: ${classifier}
+  base_model: ${simclr}
+  val_dataset: ${cadet_val_dataset}
   args:
-    val_image_path: image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val
-    test_image_sets: ['imagenet', 'imagenet_o', 'inaturalist', 'pgd', 'cw', 'fgsm']
-    n_tests: 100
-    n_transforms: 50
-    sample_size_1: 300
-    sample_size_2: 2000
-    # n_tests: 10
-    # n_transforms: 10
-    # sample_size_1: 3
-    # sample_size_2: 20
+    test_image_sets: ['same_dist', 'imagenet_o', 'inaturalist', 'pgd', 'cw', 'fgsm']
+    # n_tests: 100
+    # n_transforms: 50
+    # sample_size_1: 300
+    # sample_size_2: 2000
+    n_tests: 5
+    n_transforms: 5
+    sample_size_1: 3
+    sample_size_2: 20
 
 imagenet_data_module:
   _target_: utils.data_utils.ImageNetDataModule
@@ -74,3 +74,9 @@ imagenet_data_module:
     cadet_n_tests: ${cadet.args.n_tests}
     cadet_n_transforms: ${cadet.args.n_transforms}
 
+cadet_val_dataset:
+  _target_: torchvision.datasets.ImageFolder
+  root: image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val
+  transform:
+    _target_: utils.data_utils.CADetTransform
+    num_tranforms: ${cadet.args.n_transforms}

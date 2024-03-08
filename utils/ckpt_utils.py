@@ -18,7 +18,6 @@ simclr_categories = {'finetuned_100pct': 37535, 'finetuned_10pct': 3754,
                      'finetuned_1pct': 751, 'pretrained': 250228, 'supervised': 28151}
 chunk_size = 1024 * 8
 
-
 def download(url, destination):
     if os.path.exists(destination):
         return

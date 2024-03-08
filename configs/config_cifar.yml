@@ -30,21 +30,53 @@ simclr:
 
 mmd:
   _target_: models.mmd.MMD
-  base_model: ${classifier}
-  # base_model: ${simclr}
+  # base_model: ${classifier}
+  base_model: ${simclr}
   args:
     n_tests: 100
     n_perms: 500
-    sample_sizes: [50, 100, 200, 500, 1000]
+    sample_sizes: [50, 100, 200]
     sig_level: 0.05
     clean_calib: True
+    image_set_q: same_dist
+
+cadet:
+  _target_: models.cadet.CADet
+  # base_model: ${classifier}
+  base_model: ${simclr}
+  val_dataset: ${cadet_val_dataset}
+  args:
+    test_image_sets: ['same_dist', 'cifar10_1', 'pgd', 'cw', 'fgsm']
+    n_tests: 100
+    n_transforms: 50
+    sample_size_1: 300
+    sample_size_2: 2000
+    # n_tests: 5
+    # n_transforms: 5
+    # sample_size_1: 3
+    # sample_size_2: 20
 
 cifar_data_module:
   _target_: utils.data_utils.CIFARDataModule
   args:
     cifar10_path: image_data/Cifar10
     cifar10_1_path: image_data/Cifar10_1/cifar10.1_v4_data.npy
+    cifar10_fgsm_path: image_data/Cifar10/cifar10_val_FGSM.npy
+    cifar10_cw_path: image_data/Cifar10/cifar10_val_FGSM.npy
+    cifar10_pgd_path: image_data/Cifar10/cifar10_val_PGD.npy
     mode: supervised
     batch_size: 256
     mmd_sample_sizes: ${mmd.args.sample_sizes}
     mmd_n_tests: ${mmd.args.n_tests}
+    mmd_image_set_q: ${mmd.args.image_set_q}
+    cadet_n_tests: ${cadet.args.n_tests}
+    cadet_n_transforms: ${cadet.args.n_transforms}
+
+cadet_val_dataset:
+  _target_: torchvision.datasets.CIFAR10
+  root: image_data/Cifar10
+  train: False
+  download: True
+  transform:
+    _target_: utils.data_utils.CADetTransform_CIFAR
+    num_tranforms: ${cadet.args.n_transforms}
