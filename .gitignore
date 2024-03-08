@@ -16,6 +16,7 @@ image_data/
 imagenet_ckpts/
 cifar_ckpts/
 cifar_log/
+lightning_logs/
 eggs/
 .eggs/
 lib/

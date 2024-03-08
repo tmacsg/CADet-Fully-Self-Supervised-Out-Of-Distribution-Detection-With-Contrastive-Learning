@@ -149,10 +149,10 @@ class ImageNetDataModule(pl.LightningDataModule):
                 self.val_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)
 
             if stage == 'test':
-                self.test_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)   
+                # self.test_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)   
                 # self.test_dataset = ImageFolder(root=self.fgsm_path, transform=self.test_transform)  
                 # self.test_dataset = ImageFolder(root=self.pgd_path, transform=self.test_transform)
-                # self.test_dataset = ImageFolder(root=self.cw_path, transform=self.test_transform) 
+                self.test_dataset = ImageFolder(root=self.cw_path, transform=self.test_transform) 
                 # self.test_dataset = ImageFolder(root=self.imagenet_o_path, transform=self.test_transform) 
 
         if self.mode == 'unsupervised':
@@ -276,6 +276,50 @@ class DatasetAttacker:
             # plt.imshow(x)
             # plt.show()
             x = x.resize(image_size)
+            class_name = self.dataset.idx_to_class[label.cpu().item()]
+            target_path = os.path.join(self.target_path, class_name)
+            os.makedirs(target_path, exist_ok=True)
+            x.save(os.path.join(target_path, image_name), quality=100)
+
+class AttackDataset(ImageFolder):
+    def __init__(self, image_path, transform):
+        super().__init__(image_path, transform=transform)
+        self.idx_to_class = {v: k for k, v in self.class_to_idx.items()}
+
+    def __getitem__(self, index: int):
+        path, target = self.samples[index]
+        sample = self.loader(path)
+        image_size = sample.size
+        image_name = re.split("/|\\\\", path)[-1]
+        if self.transform is not None:
+            sample = self.transform(sample)
+
+        return sample, target, torch.tensor(image_size), image_name
+
+class DatasetAttacker_NoResize:
+    def __init__(self, image_path, target_path, attacker, device=torch.device('cpu')):
+        self.image_path = image_path
+        self.target_path = target_path
+        self.attacker = attacker
+        self.device = device
+        self.pre_attack_transform = T.ToTensor()
+        self.post_attack_transform = T.ToPILImage()
+        self.dataset = AttackDataset(self.image_path, transform=self.pre_attack_transform)
+                
+    def attack(self, num_samples = None):  
+        sampler = None if num_samples is None else RandomSampler(self.dataset, num_samples=num_samples) 
+        self.dataloader = DataLoader(self.dataset, batch_size=1, sampler=sampler, shuffle=False)
+        for _, (images, labels, image_sizes, image_names) in enumerate(tqdm(self.dataloader)):
+            adv_images, labels = images.to(self.device), labels.to(self.device)
+            adv_images = self.attacker(images, labels)
+            self.save(adv_images, labels, image_sizes, image_names)
+                               
+    def save(self, images, labels, image_sizes, image_names):
+        for image, label, _, image_name in zip(images, labels, image_sizes, image_names):
+            x = self.post_attack_transform(image)
+            # import matplotlib.pyplot as plt
+            # plt.imshow(x)
+            # plt.show()
             class_name = self.dataset.idx_to_class[label.cpu().item()]
             target_path = os.path.join(self.target_path, class_name)
             os.makedirs(target_path, exist_ok=True)

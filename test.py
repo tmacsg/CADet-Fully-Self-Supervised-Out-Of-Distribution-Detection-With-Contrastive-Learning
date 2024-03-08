@@ -70,7 +70,8 @@ def test_mmd():
     cfg.mmd.args.clean_calib = False
     # cfg.mmd.args.image_set_q = 'imagenet_o'
     # cfg.mmd.args.image_set_q = 'inaturalist'
-    cfg.mmd.args.image_set_q = 'pgd'
+    # cfg.mmd.args.image_set_q = 'pgd'
+    cfg.mmd.args.image_set_q = 'cw'
     model = instantiate(cfg.mmd)
     data_module = instantiate(cfg.imagenet_data_module)
     trainer = pl.Trainer(devices=1)
@@ -95,7 +96,7 @@ def test_cadet():
 
 if __name__ == '__main__':
     pl.seed_everything(42)
-    # test_classifier()
+    # test_classifier_imagenet()
     # test_simclr()
     # test_mmd()
     # test_mmd_cifar()
@@ -103,4 +104,4 @@ if __name__ == '__main__':
     # test_classifier_cifar()
     # eval_simclr_cifar()
     # test_simclr_cifar()
-     
+    

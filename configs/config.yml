@@ -42,8 +42,8 @@ mmd:
 
 cadet:
   _target_: models.cadet.CADet
-  base_model: ${classifier}
-  # base_model: ${simclr}
+  # base_model: ${classifier}
+  base_model: ${simclr}
   args:
     val_image_path: image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val
     test_image_sets: ['imagenet', 'imagenet_o', 'inaturalist', 'pgd', 'cw', 'fgsm']
@@ -51,8 +51,8 @@ cadet:
     n_transforms: 50
     sample_size_1: 300
     sample_size_2: 2000
-    # n_tests: 10
-    # n_transforms: 10
+    # n_tests: 5
+    # n_transforms: 5
     # sample_size_1: 3
     # sample_size_2: 20
 

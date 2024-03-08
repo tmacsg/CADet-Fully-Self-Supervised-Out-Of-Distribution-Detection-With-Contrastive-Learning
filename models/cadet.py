@@ -61,7 +61,7 @@ class CADet(pl.LightningModule):
             X_test_feat = self.backbone(X_test)
             m_in, m_out = self.compute(X_test_feat)
             test_score = m_in + self.gamma * m_out
-            p_value = (torch.sum(test_score.cpu() >= self.scores).item() + 1) / (len(self.scores) + 1)
+            p_value = (torch.sum(test_score.cpu() > self.scores).item() + 1) / (len(self.scores) + 1)
             self.p_value_outputs[key].loc[batch_idx] = [batch_idx, p_value]
             self.m_in[key][batch_idx] = m_in
             self.m_out[key][batch_idx] = m_out
@@ -108,16 +108,16 @@ class CADet(pl.LightningModule):
             m_out = outer_sims.sum() 
             m_outs.append(m_out.item())
 
-        m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms + 1))
-        # m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms - 1))
+        # m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms + 1))
+        m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms - 1))
         m_outs = torch.tensor(m_outs) / (self.n_transforms * self.n_transforms * self.sample_size_1)
         self.gamma = torch.sqrt(torch.var(m_ins) / torch.var(m_outs))
         self.scores = m_ins + self.gamma * m_outs
     
     def compute(self, X_test_feat):
         intra_sim = self._cal_similarity(X_test_feat, X_test_feat)
-        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms + 1)) 
-        # m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms - 1)) 
+        # m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms + 1)) 
+        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms - 1)) 
         outer_sims = torch.vmap(lambda arg: self._cal_similarity(X_test_feat, arg).sum())(self.X_1_feats)
         m_out = outer_sims.sum() / (self.n_transforms * self.n_transforms * self.sample_size_1)
         return m_in, m_out
