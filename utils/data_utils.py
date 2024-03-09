@@ -230,10 +230,8 @@ class ImageNetDataModule(pl.LightningDataModule):
 
             if stage == 'test':
                 # self.test_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)   
-                # self.test_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)   
                 # self.test_dataset = ImageFolder(root=self.fgsm_path, transform=self.test_transform)  
                 # self.test_dataset = ImageFolder(root=self.pgd_path, transform=self.test_transform)
-                self.test_dataset = ImageFolder(root=self.cw_path, transform=self.test_transform) 
                 self.test_dataset = ImageFolder(root=self.cw_path, transform=self.test_transform) 
                 # self.test_dataset = ImageFolder(root=self.imagenet_o_path, transform=self.test_transform) 
 

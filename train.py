@@ -61,7 +61,6 @@ def train_simclr_imagenet():
     model = instantiate(cfg.simclr)
     data_module = instantiate(cfg.imagenet_data_module)
     data_module.setup('fit')
-    dm = data_module.train_dataloader()
     trainer = pl.Trainer()
     trainer.fit(model, data_module)
 

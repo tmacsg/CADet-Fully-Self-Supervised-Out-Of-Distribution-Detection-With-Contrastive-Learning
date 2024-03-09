@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 import torch
 import torchattacks
 from utils.data_utils import AttackDataset, DatasetAttacker, DatasetAttacker_NoResize, DatasetAttacker_CIFAR10
-from utils.data_utils import AttackDataset, DatasetAttacker, DatasetAttacker_NoResize
 from utils.ckpt_utils import *
 from torchvision.models import resnet50,  ResNet50_Weights
 from models.resnet import ResNet50
@@ -340,10 +339,9 @@ if __name__ == '__main__':
     # prepare_imagenet_fgsm(1000)
     # prepare_imagenet_fgsm_no_resize(1000)
     # prepare_cifar10_attack()
-    # show_difference_imagenet()
-    show_difference_cifar10()
+    show_difference_imagenet()
+    # show_difference_cifar10()
     # prepare_imagenet_fgsm_no_resize(1000)
-    show_difference()
     # download_models()
     # extract_simclr()
     # extract_classifier()
