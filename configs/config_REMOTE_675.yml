@@ -1,0 +1,76 @@
+exp_name: imagenet
+
+classifier:
+  _target_: models.classifier.Classifier
+  backbone:
+    _target_: models.resnet.ResNet50 
+    cifar_head: False
+  args:  
+    num_classes: 1000
+    lr: 0.01
+    momentum: 0.9
+    weight_decay: 1e-6
+    max_epochs: 200
+    ckpt_path: 'downloads/resnet-50_classifier.ckpt'
+
+simclr:
+  _target_: models.simclr.SimCLR
+  backbone:
+    _target_: models.resnet.ResNet50 
+    cifar_head: False
+  args:  
+    num_layers: 3
+    mode: train 
+    num_classes: 1000
+    lr: 0.01
+    momentum: 0.9
+    weight_decay: 1e-6
+    max_epochs: 200
+    ckpt_path: 'downloads/resnet-50_simclr.ckpt'
+
+mmd:
+  _target_: models.mmd.MMD
+  # base_model: ${classifier}
+  base_model: ${simclr}
+  args:
+    n_tests: 100
+    n_perms: 500
+    sample_sizes: [3, 5, 10, 20]
+    sig_level: 0.05
+    clean_calib: True
+    image_set_q: imagenet_o
+
+cadet:
+  _target_: models.cadet.CADet
+  # base_model: ${classifier}
+  base_model: ${simclr}
+  args:
+    val_image_path: image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val
+    test_image_sets: ['imagenet', 'imagenet_o', 'inaturalist', 'pgd', 'cw', 'fgsm']
+    n_tests: 100
+    n_transforms: 50
+    sample_size_1: 300
+    sample_size_2: 2000
+    # n_tests: 5
+    # n_transforms: 5
+    # sample_size_1: 3
+    # sample_size_2: 20
+
+imagenet_data_module:
+  _target_: utils.data_utils.ImageNetDataModule
+  args:
+    train_path: image_data/imagenet-object-localization-challenge/ILSVRC\Data/CLS-LOC/train
+    val_path: image_data/imagenet-object-localization-challenge/ILSVRC\Data/CLS-LOC/val
+    imagenet_o_path: image_data/imagenet-o
+    inaturalist_path: image_data/iNaturalist
+    pgd_path: image_data/PGD
+    cw_path: image_data/CW
+    fgsm_path: image_data/FGSM
+    mode: unsupervised
+    batch_size: 128
+    mmd_sample_sizes: ${mmd.args.sample_sizes}
+    mmd_n_tests: ${mmd.args.n_tests}
+    mmd_image_set_q: ${mmd.args.image_set_q}
+    cadet_n_tests: ${cadet.args.n_tests}
+    cadet_n_transforms: ${cadet.args.n_transforms}
+
