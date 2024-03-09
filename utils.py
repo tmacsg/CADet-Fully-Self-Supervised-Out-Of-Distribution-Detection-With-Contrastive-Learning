@@ -13,12 +13,15 @@ import matplotlib.pyplot as plt
 import torch
 import torchattacks
 from utils.data_utils import AttackDataset, DatasetAttacker, DatasetAttacker_NoResize, DatasetAttacker_CIFAR10
+from utils.data_utils import AttackDataset, DatasetAttacker, DatasetAttacker_NoResize
 from utils.ckpt_utils import *
 from torchvision.models import resnet50,  ResNet50_Weights
 from models.resnet import ResNet50
 from PIL import Image
 import random
 from utils.data_utils import CIFAR10_NPY, CIFAR10
+from PIL import Image
+import random
 
 def prepare_imagenet_val_set():
     """ Copy images from imagenet val folder to another folder with class names as the subfolder name
@@ -71,6 +74,21 @@ def prepare_imagenet_pgd_no_resize(num_samples=None):
                                     attacker=torchattacks.PGD(model, eps=0.02, alpha=0.002, steps=50, random_start=True))
     data_attacker.attack(num_samples)
 
+def prepare_imagenet_pgd_no_resize(num_samples=None):
+    imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # model = resnet50(weights=ResNet50_Weights.DEFAULT).to(device)
+    cfg = OmegaConf.load("configs/config.yml")   
+    model = instantiate(cfg.classifier)
+    model._load_weights()
+    model = model.to(device)
+    model.eval()
+    data_attacker = DatasetAttacker_NoResize(image_path=imagenet_val_source_dir, 
+                                    target_path='image_data/PGD',
+                                    device=device,
+                                    attacker=torchattacks.PGD(model, eps=0.02, alpha=0.002, steps=50, random_start=True))
+    data_attacker.attack(num_samples)
+
 
 def prepare_imagenet_cw(num_samples=None):
     imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
@@ -82,6 +100,21 @@ def prepare_imagenet_cw(num_samples=None):
     model = model.to(device)
     model.eval()
     data_attacker = DatasetAttacker(image_path=imagenet_val_source_dir, 
+                                    target_path='image_data/CW',
+                                    device=device,
+                                    attacker=torchattacks.CW(model, c=1, kappa=0, steps=50, lr=0.03))
+    data_attacker.attack(num_samples)
+
+def prepare_imagenet_cw_no_resize(num_samples=None):
+    imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # model = resnet50(weights=ResNet50_Weights.DEFAULT).to(device)
+    cfg = OmegaConf.load("configs/config.yml")   
+    model = instantiate(cfg.classifier)
+    model._load_weights()
+    model = model.to(device)
+    model.eval()
+    data_attacker = DatasetAttacker_NoResize(image_path=imagenet_val_source_dir, 
                                     target_path='image_data/CW',
                                     device=device,
                                     attacker=torchattacks.CW(model, c=1, kappa=0, steps=50, lr=0.03))
@@ -217,6 +250,56 @@ def show_difference_cifar10():
     plt.tight_layout()
     plt.show()
 
+def prepare_imagenet_fgsm_no_resize(num_samples=None):
+    imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # model = resnet50(weights=ResNet50_Weights.DEFAULT).to(device)
+    cfg = OmegaConf.load("configs/config.yml")   
+    model = instantiate(cfg.classifier)
+    model._load_weights()
+    model = model.to(device)
+    model.eval()
+    data_attacker = DatasetAttacker_NoResize(image_path=imagenet_val_source_dir, 
+                                    target_path='image_data/FGSM',
+                                    device=device,
+                                    attacker=torchattacks.FGSM(model, eps=0.05))
+    data_attacker.attack(num_samples)
+
+
+def show_difference():
+    """ show difference between attacked image and original image
+    """
+    imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
+    ATTACK_TYPES = ['CW', 'FGSM', 'PGD']
+    def get_random_image_path(attack_type):
+        assert attack_type in ATTACK_TYPES
+        dir = os.path.join('image_data',attack_type)
+        sub_dir = random.choice(list(os.listdir(dir)))
+        image_name = os.listdir(os.path.join(dir, sub_dir))[0]
+        image_path  = os.path.join(sub_dir, image_name)
+        original_image_path = os.path.join(imagenet_val_source_dir, image_path)
+        attacked_image_path = os.path.join(dir, image_path)
+        return original_image_path, attacked_image_path
+    
+    _, axes = plt.subplots(len(ATTACK_TYPES),3, figsize=(8,8))
+    for i in range(len(ATTACK_TYPES)):
+        original_image_path, attacked_image_path = get_random_image_path(ATTACK_TYPES[i])
+        original_image = Image.open(original_image_path)
+        attacked_image = Image.open(attacked_image_path)
+        diff = np.abs(np.array(attacked_image, dtype=np.int8) - np.array(original_image, dtype=np.int8)) * 20
+        # diff_image = Image.fromarray(diff.astype(np.uint8))
+        axes[i,0].imshow(original_image)
+        axes[i,0].axis('off')
+        axes[i,0].set_title('ORIGINAL')
+        axes[i,1].imshow(attacked_image)
+        axes[i,1].axis('off')
+        axes[i,1].set_title(f'{ATTACK_TYPES[i]}_ATTACKED')
+        axes[i,2].imshow(diff, cmap='hot')
+        axes[i,2].axis('off')
+        axes[i,2].set_title('DIFFERENCE * 20')
+    plt.tight_layout()
+    plt.show()
+
 def download_models():
     model = 'r50_1x_sk0'
     # path = 'downloads/' + 'r50_1x_sk0_simclr'
@@ -251,13 +334,19 @@ if __name__ == '__main__':
     # prepare_imagenet_pgd_no_resize(1000)
     # prepare_imagenet_cw(1000)
     # prepare_imagenet_cw_no_resize(1000)
+    # prepare_imagenet_pgd_no_resize(1000)
+    # prepare_imagenet_cw(1000)
+    # prepare_imagenet_cw_no_resize(1000)
     # prepare_imagenet_fgsm(1000)
     # prepare_imagenet_fgsm_no_resize(1000)
     # prepare_cifar10_attack()
     # show_difference_imagenet()
     show_difference_cifar10()
+    # prepare_imagenet_fgsm_no_resize(1000)
+    show_difference()
     # download_models()
     # extract_simclr()
     # extract_classifier()
+    
     
     

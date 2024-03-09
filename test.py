@@ -72,6 +72,8 @@ def test_mmd():
     # cfg.mmd.args.image_set_q = 'inaturalist'
     # cfg.mmd.args.image_set_q = 'pgd'
     # cfg.mmd.args.image_set_q = 'cw'
+    # cfg.mmd.args.image_set_q = 'pgd'
+    cfg.mmd.args.image_set_q = 'cw'
     model = instantiate(cfg.mmd)
     data_module = instantiate(cfg.imagenet_data_module)
     trainer = pl.Trainer(devices=1)
