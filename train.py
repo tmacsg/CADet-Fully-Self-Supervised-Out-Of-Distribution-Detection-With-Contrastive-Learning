@@ -34,7 +34,7 @@ def train_cls_cifar():
     cfg = OmegaConf.load('configs/config_cifar.yml')
     cfg.cifar_data_module.args.mode = 'supervised'
     cfg.classifier.args.lr = 0.3
-    cfg.classifier.args.max_epochs = 800
+    cfg.classifier.args.max_epochs = 200
     model = instantiate(cfg.classifier)
     data_module = instantiate(cfg.cifar_data_module)
 
@@ -42,17 +42,21 @@ def train_cls_cifar():
                                           dirpath="cifar_ckpts", save_top_k=1, save_last=True,
                                           monitor="val_acc_cls", mode='max')
     lr_monitor_callback = LearningRateMonitor(logging_interval='step')
-    n_devices = 1
-    accelerator = 'gpu'
-    accumulate_grad_batches = 1
-    strategy = DDPStrategy(find_unused_parameters=True, process_group_backend='gloo')
+    # n_devices = 1
+    # accelerator = 'gpu'
+    # accumulate_grad_batches = 1
+    # strategy = DDPStrategy(find_unused_parameters=True, process_group_backend='gloo')
     logger = TensorBoardLogger(save_dir=f'{cfg.exp_name}_log')
 
-    trainer = pl.Trainer(devices=n_devices, accelerator=accelerator, strategy=strategy,
-                          accumulate_grad_batches=accumulate_grad_batches,
-                          max_epochs = cfg.classifier.args.max_epochs,
-                          logger = logger,
-                          callbacks=[lr_monitor_callback, checkpoint_callback])
+    # trainer = pl.Trainer(devices=n_devices, accelerator=accelerator, strategy=strategy,
+    #                       accumulate_grad_batches=accumulate_grad_batches,
+    #                       max_epochs = cfg.classifier.args.max_epochs,
+    #                       logger = logger,
+    #                       callbacks=[lr_monitor_callback, checkpoint_callback])
+    trainer = pl.Trainer(max_epochs = cfg.classifier.args.max_epochs, 
+                         accelerator = 'gpu',
+                         logger = logger,
+                         callbacks=[lr_monitor_callback, checkpoint_callback])
     trainer.fit(model, data_module)
 
 def train_simclr_imagenet():
@@ -94,6 +98,6 @@ if __name__ == '__main__':
     pl.seed_everything(42)
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "29500"
-    train_simclr_imagenet()
+    # train_simclr_imagenet()
     # train_simclr_cifar()
-    # train_cls_cifar()
+    train_cls_cifar()

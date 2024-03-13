@@ -1,5 +1,5 @@
 from typing import Tuple, Union, List, Optional
-from PIL.Image import Image
+from PIL import Image
 from torch import Tensor
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS
@@ -9,7 +9,7 @@ from torchvision.datasets import CIFAR10, ImageFolder
 from lightly.data import LightlyDataset
 from lightly.transforms.utils import IMAGENET_NORMALIZE
 from lightly.transforms.gaussian_blur import GaussianBlur
-from lightly.transforms import SimCLRTransform
+from lightly.transforms import SimCLRTransform, SimCLRViewTransform
 import torchvision.transforms as T
 import numpy as np 
 import os
@@ -32,7 +32,7 @@ class CADetTransform():
         ])
         self.transforms = [view_transform for _ in range(num_tranforms)]
 
-    def __call__(self, image: Union[Tensor, Image]) -> Union[List[Tensor], List[Image]]:
+    def __call__(self, image):
          return [transform(image) for transform in self.transforms]
     
 class CADetTransform_CIFAR():
@@ -42,15 +42,25 @@ class CADetTransform_CIFAR():
         hf_prob: float = 0.5
     ):
         view_transform = T.Compose([
-            # T.RandomCrop(32, padding=4),
             T.RandomResizedCrop(size=32, scale=(0.75, 0.75)),
             T.RandomHorizontalFlip(p=hf_prob),
-            T.ToTensor()
+            T.ToTensor(),
+            T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])
         ])
         self.transforms = [view_transform for _ in range(num_tranforms)]
 
-    def __call__(self, image: Union[Tensor, Image]) -> Union[List[Tensor], List[Image]]:
+    def __call__(self, image):
          return [transform(image) for transform in self.transforms]
+    
+class PixelFlick():
+    def __init__(self, scale):
+        self.scale = scale
+
+    def __call__(self, image):
+        image = np.array(image, dtype=np.uint8)
+        noise = torch.randint(-self.scale, self.scale, image.shape)
+        image =  np.clip(image + noise.numpy(), 0, 255).astype(np.uint8)
+        return Image.fromarray(image)
 
 class CIFAR10_NPY(Dataset):
     """ load cifar dataset from .npy format
@@ -68,7 +78,7 @@ class CIFAR10_NPY(Dataset):
 
     def __getitem__(self, index):
         if self.data.dtype != 'uint8':
-            # object
+            # dict
             sample = self.data.item()['data'][index]
             label = self.data.item()['labels'][index]
         else:
@@ -90,14 +100,14 @@ class CIFARDataModule(pl.LightningDataModule):
         self.cifar10_pgd_path = args.cifar10_pgd_path
         self.mode = args.mode
         self.batch_size = args.batch_size
-        assert self.mode in ['supervised', 'unsupervised', 'mmd', 'cadet']
+        assert self.mode in ['supervised', 'unsupervised', 'mmd', 'cadet', 'mmd_ss']
         self.mmd_sample_sizes = args.mmd_sample_sizes
         self.mmd_n_tests = args.mmd_n_tests
         self.mmd_image_set_q = args.mmd_image_set_q
         assert self.mmd_image_set_q in ['same_dist', 'cifar10_1', 'pgd', 'cw', 'fgsm']
         self.cadet_n_tests = args.cadet_n_tests
         self.cadet_n_transforms = args.cadet_n_transforms
-        self.test_transform = T.ToTensor()
+        self.test_transform = T.Compose([T.ToTensor(), T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])])
 
     def prepare_data(self):
         CIFAR10(root=self.cifar10_path, train=True, download=True)
@@ -106,16 +116,20 @@ class CIFARDataModule(pl.LightningDataModule):
     def setup(self, stage: str):
         if self.mode == 'supervised':
             if stage == 'fit':
+                # self.train_dataset = CIFAR10(root=self.cifar10_path, train=True, download=True,
+                #                              transform=T.Compose([T.RandomCrop(32, padding=4), 
+                #                                                  T.RandomHorizontalFlip(),
+                #                                                  T.ToTensor()])) 
                 self.train_dataset = CIFAR10(root=self.cifar10_path, train=True, download=True,
-                                             transform=T.Compose([T.RandomCrop(32, padding=4), 
-                                                                 T.RandomHorizontalFlip(),
-                                                                 T.ToTensor()])) 
+                                             transform=SimCLRViewTransform(input_size=32)) 
                 self.val_dataset = CIFAR10(root=self.cifar10_path, train=False, download=True, transform=self.test_transform)
             if stage == 'test' or stage == 'validate': 
                 # self.val_dataset = CIFAR10(root=self.cifar10_path, train=False, download=True, transform=self.test_transform)
                 # self.val_dataset = CIFAR10_NPY(root=self.cifar10_fgsm_path, transform=self.test_transform)
                 # self.val_dataset = CIFAR10_NPY(root=self.cifar10_cw_path, transform=self.test_transform)
                 self.val_dataset = CIFAR10_NPY(root=self.cifar10_pgd_path, transform=self.test_transform)
+                # self.val_dataset = CIFAR10(root=self.cifar10_path, train=True, download=True, transform=T.ToTensor())
+
 
         if self.mode == 'unsupervised':
             if stage == 'fit':
@@ -139,6 +153,21 @@ class CIFARDataModule(pl.LightningDataModule):
                     self.dataset_q = CIFAR10_NPY(root=self.cifar10_cw_path, transform=self.test_transform) 
                 elif self.mmd_image_set_q == 'fgsm':
                     self.dataset_q = CIFAR10_NPY(root=self.cifar10_fgsm_path, transform=self.test_transform) 
+
+        if self.mode == 'mmd_ss':
+            if stage == 'test':
+                test_transform_q = CADetTransform_CIFAR(num_tranforms=max(self.mmd_sample_sizes))          
+                self.dataset_s = CIFAR10(root=self.cifar10_path, train=False, download=True, transform=self.test_transform)
+                if self.mmd_image_set_q == 'same_dist':
+                    self.dataset_q = CIFAR10(root=self.cifar10_path, train=True, download=True, transform=test_transform_q) 
+                elif self.mmd_image_set_q == 'cifar10_1':
+                    self.dataset_q = CIFAR10_NPY(root=self.cifar10_1_path, transform=test_transform_q) 
+                elif self.mmd_image_set_q == 'pgd':
+                    self.dataset_q = CIFAR10_NPY(root=self.cifar10_pgd_path, transform=test_transform_q) 
+                elif self.mmd_image_set_q == 'cw':
+                    self.dataset_q = CIFAR10_NPY(root=self.cifar10_cw_path, transform=test_transform_q) 
+                elif self.mmd_image_set_q == 'fgsm':
+                    self.dataset_q = CIFAR10_NPY(root=self.cifar10_fgsm_path, transform=test_transform_q) 
 
         if self.mode == 'cadet':
             if stage == 'test':
@@ -167,10 +196,23 @@ class CIFARDataModule(pl.LightningDataModule):
             num_samples = batch_size * self.mmd_n_tests
             sampler_s = RandomSampler(self.dataset_s, replacement=True, num_samples=3*num_samples)
             sampler_q = RandomSampler(self.dataset_q, replacement=True, num_samples=num_samples)
-            dataloader_s = DataLoader(self.dataset_s, batch_size=batch_size*3, sampler=sampler_s,
-                                    num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True)
-            dataloader_q = DataLoader(self.dataset_q, batch_size=batch_size, sampler=sampler_q,
-                                    num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True)
+            dataloader_s = DataLoader(self.dataset_s, batch_size=batch_size*3, sampler=sampler_s,)
+                                    # num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True)
+            dataloader_q = DataLoader(self.dataset_q, batch_size=batch_size, sampler=sampler_q,)
+                                    # num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True)
+            
+            return CombinedLoader({'s': dataloader_s, 'q': dataloader_q})
+        
+        if self.mode == 'mmd_ss':
+            # mmd test with single sample 
+            batch_size = max(self.mmd_sample_sizes)
+            num_samples = batch_size * self.mmd_n_tests
+            sampler_s = RandomSampler(self.dataset_s, replacement=True, num_samples=3*num_samples)
+            sampler_q = RandomSampler(self.dataset_q, replacement=True, num_samples=self.mmd_n_tests)
+            dataloader_s = DataLoader(self.dataset_s, batch_size=batch_size*3, sampler=sampler_s, )
+                                    # num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True)
+            dataloader_q = DataLoader(self.dataset_q, batch_size=1, sampler=sampler_q, collate_fn=self.mmd_ss_collate_fn,)
+                                    # num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True)
             
             return CombinedLoader({'s': dataloader_s, 'q': dataloader_q})
         
@@ -192,6 +234,13 @@ class CIFARDataModule(pl.LightningDataModule):
     def cadet_collate_fn(batch):
         X, _ = batch[0]
         return torch.stack(X)
+    
+    @staticmethod
+    def mmd_ss_collate_fn(batch):
+        X, labels = batch[0]
+        if isinstance(X, list):
+            X = torch.stack(X)
+        return X, labels
 
 class ImageNetDataModule(pl.LightningDataModule):
     def __init__(self, args):
@@ -331,14 +380,20 @@ class AttackDataset(ImageFolder):
         return sample, target, torch.tensor(image_size), image_name
 
 class DatasetAttacker:
-    def __init__(self, image_path, target_path, attacker, device=torch.device('cpu'), input_size=[224,224]):
+    def __init__(self, image_path, target_path, attacker, normalize=False, device=torch.device('cpu'), input_size=[224,224]):
         self.image_path = image_path
         self.target_path = target_path
         self.attacker = attacker
         self.device = device
-        self.pre_attack_transform = T.Compose([T.Resize(size=input_size, antialias=True), 
-                                               T.ToTensor()])
-        self.post_attack_transform = T.ToPILImage()
+        self.normalize = normalize
+        self.mean = IMAGENET_NORMALIZE['mean']
+        self.std = IMAGENET_NORMALIZE['std']
+        transforms = [T.Resize(size=input_size, antialias=True), T.ToTensor()]
+        if self.normalize:
+            transforms.append(T.Normalize(mean=self.mean, std=self.std))
+            self.attacker.set_normalization_used(mean=self.mean, std=self.std)
+        
+        self.pre_attack_transform = T.Compose(transforms)
         self.dataset = AttackDataset(self.image_path, transform=self.pre_attack_transform)
                 
     def attack(self, num_samples = None, batch_size=128):  
@@ -351,7 +406,9 @@ class DatasetAttacker:
                                
     def save(self, images, labels, image_sizes, image_names):
         for image, label, image_size, image_name in zip(images, labels, image_sizes, image_names):
-            x = self.post_attack_transform(image)
+            if self.normalize:
+                image = self.attacker.inverse_normalize(image)
+            x = self._to_pil_image(image)
             # import matplotlib.pyplot as plt
             # plt.imshow(x)
             # plt.show()
@@ -360,28 +417,39 @@ class DatasetAttacker:
             target_path = os.path.join(self.target_path, class_name)
             os.makedirs(target_path, exist_ok=True)
             x.save(os.path.join(target_path, image_name), quality=100)
-
+            
+    def _to_pil_image(self, x):
+        return T.ToPILImage()(x)
 class DatasetAttacker_NoResize:
-    def __init__(self, image_path, target_path, attacker, device=torch.device('cpu')):
+    def __init__(self, image_path, target_path, attacker, normalize=False, device=torch.device('cpu')):
         self.image_path = image_path
         self.target_path = target_path
         self.attacker = attacker
         self.device = device
-        self.pre_attack_transform = T.ToTensor()
-        self.post_attack_transform = T.ToPILImage()
+        self.normalize = normalize
+        self.mean = IMAGENET_NORMALIZE['mean']
+        self.std = IMAGENET_NORMALIZE['std']
+        transforms = [T.ToTensor()]
+        if self.normalize:
+            transforms.append(T.Normalize(mean=self.mean, std=self.std))
+            self.attacker.set_normalization_used(mean=self.mean, std=self.std)
+        
+        self.pre_attack_transform = T.Compose(transforms)
         self.dataset = AttackDataset(self.image_path, transform=self.pre_attack_transform)
                 
     def attack(self, num_samples = None):  
         sampler = None if num_samples is None else RandomSampler(self.dataset, num_samples=num_samples) 
         self.dataloader = DataLoader(self.dataset, batch_size=1, sampler=sampler, shuffle=False)
         for _, (images, labels, image_sizes, image_names) in enumerate(tqdm(self.dataloader)):
-            adv_images, labels = images.to(self.device), labels.to(self.device)
+            images, labels = images.to(self.device), labels.to(self.device)
             adv_images = self.attacker(images, labels)
             self.save(adv_images, labels, image_sizes, image_names)
                                
     def save(self, images, labels, image_sizes, image_names):
         for image, label, _, image_name in zip(images, labels, image_sizes, image_names):
-            x = self.post_attack_transform(image)
+            if self.normalize:
+                image = self.attacker.inverse_normalize(image)
+            x = self._to_pil_image(image)
             # import matplotlib.pyplot as plt
             # plt.imshow(x)
             # plt.show()
@@ -389,15 +457,26 @@ class DatasetAttacker_NoResize:
             target_path = os.path.join(self.target_path, class_name)
             os.makedirs(target_path, exist_ok=True)
             x.save(os.path.join(target_path, image_name), quality=100)
+        
+    def _to_pil_image(self, x):
+        return T.ToPILImage()(x)
 
 class DatasetAttacker_CIFAR10:
-    def __init__(self, image_path, target_path, attacker, device=torch.device('cpu')):
+    def __init__(self, image_path, target_path, attacker, normalize=False, device=torch.device('cpu')):
         self.image_path = image_path
         self.target_path = target_path
         self.attacker = attacker
+        self.normalize = normalize
         self.device = device
-        self.dataset = CIFAR10(self.image_path, train=False, transform=T.ToTensor())
-                
+        self.mean = IMAGENET_NORMALIZE['mean']
+        self.std = IMAGENET_NORMALIZE['std']
+        transforms = [T.ToTensor()]
+        if self.normalize:
+            transforms.append(T.Normalize(mean=self.mean, std=self.std))
+            self.attacker.set_normalization_used(mean=self.mean, std=self.std)
+        self.dataset = CIFAR10(self.image_path, train=False, 
+                               transform=T.Compose(transforms))
+        
     def attack(self):   
         all_images = []
         all_labels = []
@@ -409,6 +488,8 @@ class DatasetAttacker_CIFAR10:
             all_labels.append(labels)
 
         all_images, all_labels = torch.cat(all_images,axis=0), torch.cat(all_labels,axis=0)
+        if self.normalize:
+            all_images = self.attacker.inverse_normalize(all_images)
         all_images = [np.array(self._to_pil_image(x)) for x in all_images]  # torch.vmap error, cannot vectorize!
 
         data_dict = {

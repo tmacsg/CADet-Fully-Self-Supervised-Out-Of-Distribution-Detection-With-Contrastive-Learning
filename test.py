@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.loggers import TensorBoardLogger
+import os
 
 def test_classifier_imagenet():
     cfg = OmegaConf.load('configs/config.yml')
@@ -58,22 +59,17 @@ def eval_simclr_cifar():
 def test_simclr_cifar():
     cfg = OmegaConf.load('configs/config_cifar.yml')
     cfg.cifar_data_module.args.mode = 'supervised'
-    cfg.simclr.args.mode = 'linear_eval'
+    cfg.simclr.args.mode = 'validate'
     model = instantiate(cfg.simclr)
     data_module = instantiate(cfg.cifar_data_module)
     trainer = pl.Trainer()
     trainer.validate(model, data_module)
 
-def test_mmd():
+def test_mmd_imagenet():
     cfg = OmegaConf.load('configs/config.yml')
     cfg.imagenet_data_module.args.mode = 'mmd'
     cfg.mmd.args.clean_calib = True
-    cfg.mmd.args.image_set_q = 'imagenet_o'
-    # cfg.mmd.args.image_set_q = 'inaturalist'
-    # cfg.mmd.args.image_set_q = 'pgd'
-    # cfg.mmd.args.image_set_q = 'cw'
-    # cfg.mmd.args.image_set_q = 'pgd'
-    # cfg.mmd.args.image_set_q = 'cw'
+    cfg.mmd.args.image_set_q = 'fgsm'
     model = instantiate(cfg.mmd)
     data_module = instantiate(cfg.imagenet_data_module)
     trainer = pl.Trainer(devices=1)
@@ -81,8 +77,8 @@ def test_mmd():
 
 def test_mmd_cifar():
     cfg = OmegaConf.load('configs/config_cifar.yml')
-    cfg.cifar_data_module.args.mode = 'mmd'
-    cfg.mmd.args.clean_calib = False
+    cfg.cifar_data_module.args.mode = 'mmd_ss'
+    cfg.mmd.args.clean_calib = True
     cfg.mmd.args.image_set_q = 'same_dist'
     model = instantiate(cfg.mmd)
     data_module = instantiate(cfg.cifar_data_module)
@@ -105,15 +101,18 @@ def test_cadet_cifar():
     trainer = pl.Trainer()
     trainer.test(model, data_module)
 
+
 if __name__ == '__main__':
+    os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
     pl.seed_everything(42)
     # test_classifier_imagenet()
     # test_simclr()
-    # test_mmd()
-    # test_mmd_cifar()
+    # test_mmd_imagenet()
     # test_cadet_imagenet()
-    test_cadet_cifar()
+    # test_cadet_cifar()
+    test_mmd_cifar()
     # test_classifier_cifar()
-    # eval_simclr_cifar()
     # test_simclr_cifar()
+    # eval_simclr_cifar()
+    
     

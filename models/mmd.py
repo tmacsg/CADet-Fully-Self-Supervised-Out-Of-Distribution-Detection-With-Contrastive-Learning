@@ -35,6 +35,19 @@ class MMD(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         sample_s, _ = batch['s']
         sample_q, _ = batch['q']
+
+        # import matplotlib.pyplot as plt
+        # _, axes = plt.subplots(2, len(sample_q), figsize=(len(sample_q), 4))
+        # for i in range(len(sample_q)):
+        #     axes[0,i].imshow(sample_s[i].cpu().permute(1, 2, 0))
+        #     axes[0,i].axis('off')
+        #     axes[0, i].set_title('Samples S', fontsize=10)
+        #     axes[1,i].imshow(sample_q[i].cpu().permute(1, 2, 0))
+        #     axes[1,i].axis('off')
+        #     axes[1, i].set_title('Samples Q', fontsize=10)
+        # plt.tight_layout()
+        # plt.show()
+
         feature_s = self.backbone(sample_s).flatten(start_dim=1)
         feature_q = self.backbone(sample_q).flatten(start_dim=1)
         index_s = torch.randperm(len(feature_s))

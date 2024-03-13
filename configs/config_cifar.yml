@@ -10,8 +10,8 @@ classifier:
     lr: 0.15
     momentum: 0.9
     weight_decay: 1e-4
-    max_epochs: 800
-    ckpt_path: cifar_ckpts/cifar_cls_epoch=689_val_acc_cls=0.9594.ckpt
+    max_epochs: 200
+    ckpt_path: cifar_ckpts/cifar_cls_epoch=195_val_acc_cls=0.9357.ckpt
 
 simclr:
   _target_: models.simclr.SimCLR
@@ -26,16 +26,18 @@ simclr:
     momentum: 0.9
     weight_decay: 1e-4
     max_epochs: 800
-    ckpt_path: cifar_ckpts/cifar_simclr_epoch=748_train_loss_ssl=0.5084.ckpt
+    ckpt_path: cifar_ckpts/cifar_simclr_eval_epoch=34_val_acc_cls=0.8806.ckpt
+    # ckpt_path: cifar_ckpts/cifar_simclr_epoch=794_train_loss_ssl=0.5907.ckpt
 
 mmd:
   _target_: models.mmd.MMD
-  # base_model: ${classifier}
-  base_model: ${simclr}
+  base_model: ${classifier}
+  # base_model: ${simclr}
   args:
     n_tests: 100
     n_perms: 500
-    sample_sizes: [50, 100, 200]
+    # sample_sizes: [50, 100, 200, 500]#, 1000]
+    sample_sizes: [3, 5, 10]
     sig_level: 0.05
     clean_calib: True
     image_set_q: same_dist
@@ -62,7 +64,7 @@ cifar_data_module:
     cifar10_path: image_data/Cifar10
     cifar10_1_path: image_data/Cifar10_1/cifar10.1_v4_data.npy
     cifar10_fgsm_path: image_data/Cifar10/cifar10_val_FGSM.npy
-    cifar10_cw_path: image_data/Cifar10/cifar10_val_FGSM.npy
+    cifar10_cw_path: image_data/Cifar10/cifar10_val_CW.npy
     cifar10_pgd_path: image_data/Cifar10/cifar10_val_PGD.npy
     mode: supervised
     batch_size: 256

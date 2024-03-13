@@ -13,7 +13,7 @@ class SimCLR(pl.LightningModule):
         self.backbone = backbone
 
         self.mode = args.mode
-        assert self.mode in ['train', 'linear_eval']
+        assert self.mode in ['train', 'validate', 'linear_eval']
         self.lr=args.lr
         self.momentum=args.momentum 
         self.weight_decay=args.weight_decay
@@ -24,7 +24,7 @@ class SimCLR(pl.LightningModule):
         self.projection_head = SimCLRProjectionHead(self.backbone.hidden_dim, 
                                                     self.backbone.hidden_dim, 128,
                                                     num_layers=args.num_layers)
-        self.criterion_simclr = NTXentLoss()
+        self.criterion_simclr = NTXentLoss(temperature=0.1)
         self.criterion_cls = nn.CrossEntropyLoss()
         self.outputs = []
 
@@ -55,6 +55,10 @@ class SimCLR(pl.LightningModule):
             self.log("train_loss_cls", loss, prog_bar=True)
             return loss
     
+    def on_validation_start(self):
+        if self.mode == 'validate':
+            self._load_weights()
+
     def validation_step(self, batch, batch_idx):
         if self.mode == 'train':
             (x0, x1), _, _ = batch
@@ -63,11 +67,11 @@ class SimCLR(pl.LightningModule):
             loss = self.criterion_simclr(z0, z1)
             self.log("val_loss_ssl", loss, prog_bar=True, batch_size=len(x0))
             return loss
-        elif self.mode == 'linear_eval':
+        elif self.mode == 'linear_eval' or self.mode == 'validate':
             self._infer_batch(batch)
         
     def on_validation_epoch_end(self):
-        if self.mode == 'linear_eval':
+        if self.mode == 'linear_eval' or self.mode == 'validate':
             acc = self._compute_acc()
             self.log("val_acc_cls", acc, on_epoch=True, prog_bar=True)
     
@@ -101,7 +105,8 @@ class SimCLR(pl.LightningModule):
         return acc
     
     def _load_weights(self):
-        self.load_state_dict(torch.load(self.ckpt_path)['state_dict'])
+        ckpt = torch.load(self.ckpt_path)['state_dict']
+        self.load_state_dict(ckpt)
              
     def configure_optimizers(self):
         optim = torch.optim.SGD(
