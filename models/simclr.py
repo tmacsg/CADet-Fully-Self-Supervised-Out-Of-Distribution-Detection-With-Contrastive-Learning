@@ -27,18 +27,21 @@ class SimCLR(pl.LightningModule):
         self.criterion_simclr = NTXentLoss(temperature=0.1)
         self.criterion_cls = nn.CrossEntropyLoss()
         self.outputs = []
+        
+        if self.mode == 'linear_eval':
+            print(f'linear evaluation mode. loading model from {self.ckpt_path}...')
+            self._load_weights()
+            deactivate_requires_grad(self.backbone)
+            activate_requires_grad(self.fc)
+        elif self.mode == 'validate':
+            print(f'validation mode. loading model from {self.ckpt_path}...')
+            self._load_weights()
+            deactivate_requires_grad(self)
 
     def forward(self, x):
         h = self.backbone(x)
         z = self.projection_head(h)
         return z
-
-    def on_train_start(self):
-        if self.mode == 'linear_eval':
-            print(f'linear evaluation. loading model from {self.ckpt_path}...')
-            self._load_weights()
-            deactivate_requires_grad(self.backbone)
-            activate_requires_grad(self.fc)
 
     def training_step(self, batch, batch_idx):
         if self.mode == 'train':
@@ -55,10 +58,6 @@ class SimCLR(pl.LightningModule):
             self.log("train_loss_cls", loss, prog_bar=True)
             return loss
     
-    def on_validation_start(self):
-        if self.mode == 'validate':
-            self._load_weights()
-
     def validation_step(self, batch, batch_idx):
         if self.mode == 'train':
             (x0, x1), _, _ = batch
@@ -75,9 +74,6 @@ class SimCLR(pl.LightningModule):
             acc = self._compute_acc()
             self.log("val_acc_cls", acc, on_epoch=True, prog_bar=True)
     
-    def on_test_start(self):
-        self._load_weights()
-
     def test_step(self, batch, batch_idx):
         self._infer_batch(batch)
 
@@ -105,8 +101,13 @@ class SimCLR(pl.LightningModule):
         return acc
     
     def _load_weights(self):
-        ckpt = torch.load(self.ckpt_path)['state_dict']
-        self.load_state_dict(ckpt)
+        ckpt = torch.load(self.ckpt_path)
+        if 'state_dict' in ckpt:
+            ckpt = ckpt['state_dict']
+        keys = [key for key in ckpt.keys()  if key.startswith('head')]
+        for key in keys:
+            ckpt[key[5:]] = ckpt.pop(key)
+        self.load_state_dict(ckpt, strict=False)
              
     def configure_optimizers(self):
         optim = torch.optim.SGD(

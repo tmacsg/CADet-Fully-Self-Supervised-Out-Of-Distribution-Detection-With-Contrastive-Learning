@@ -6,13 +6,15 @@ classifier:
     _target_: models.resnet.ResNet50 
     cifar_head: False
   args:  
+    mode: train
     num_classes: 1000
     lr: 0.01
     momentum: 0.9
     weight_decay: 1e-6
     max_epochs: 200
-    ckpt_path: 'downloads/resnet-50_classifier.ckpt'
-
+    # ckpt_path: 'downloads/resnet-50_classifier.ckpt'
+    ckpt_path: 'imagenet_ckpts/resnet50-classifier.pth'
+    
 simclr:
   _target_: models.simclr.SimCLR
   backbone:
@@ -26,7 +28,8 @@ simclr:
     momentum: 0.9
     weight_decay: 1e-6
     max_epochs: 200
-    ckpt_path: 'downloads/resnet-50_simclr.ckpt'
+    # ckpt_path: downloads/resnet-50_simclr.ckpt
+    ckpt_path: imagenet_ckpts/resnet-50_linear_eval_mmlab.pth
 
 mmd:
   _target_: models.mmd.MMD
@@ -43,8 +46,8 @@ mmd:
 
 cadet:
   _target_: models.cadet.CADet
-  base_model: ${classifier}
-  # base_model: ${simclr}
+  # base_model: ${classifier}
+  base_model: ${simclr}
   val_dataset: ${cadet_val_dataset}
   args:
     test_image_sets: ['same_dist', 'imagenet_o', 'inaturalist', 'pgd', 'cw', 'fgsm']

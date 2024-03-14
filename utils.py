@@ -5,7 +5,7 @@ from tqdm import tqdm
 import hydra
 from omegaconf import OmegaConf
 from hydra.utils import instantiate
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, RandomSampler
 from torchvision.datasets import ImageFolder
 import torchvision.transforms as T
 from lightly.transforms.utils import IMAGENET_NORMALIZE
@@ -22,6 +22,9 @@ from utils.data_utils import CIFAR10_NPY, CIFAR10
 from PIL import Image
 import random
 from lightly.transforms.utils import IMAGENET_NORMALIZE
+from sklearn.manifold import TSNE
+import plotly.express as px
+from sklearn.decomposition import PCA
 
 def prepare_imagenet_val_set():
     """ Copy images from imagenet val folder to another folder with class names as the subfolder name
@@ -56,13 +59,13 @@ def prepare_imagenet_pgd(num_samples=None):
     data_attacker = DatasetAttacker(image_path=imagenet_val_source_dir, 
                                     target_path='image_data/PGD',
                                     device=device,
+                                    normalize=True,
                                     attacker=torchattacks.PGD(model, eps=0.02, alpha=0.002, steps=50, random_start=True))
     data_attacker.attack(num_samples)
 
 def prepare_imagenet_pgd_no_resize(num_samples=None):
     imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # model = resnet50(weights=ResNet50_Weights.DEFAULT).to(device)
     cfg = OmegaConf.load("configs/config.yml")   
     model = instantiate(cfg.classifier)
     model._load_weights()
@@ -71,6 +74,7 @@ def prepare_imagenet_pgd_no_resize(num_samples=None):
     data_attacker = DatasetAttacker_NoResize(image_path=imagenet_val_source_dir, 
                                     target_path='image_data/PGD',
                                     device=device,
+                                    normalize=True,
                                     attacker=torchattacks.PGD(model, eps=0.02, alpha=0.002, steps=50, random_start=True))
     data_attacker.attack(num_samples)
 
@@ -78,7 +82,6 @@ def prepare_imagenet_pgd_no_resize(num_samples=None):
 def prepare_imagenet_cw(num_samples=None):
     imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # model = resnet50(weights=ResNet50_Weights.DEFAULT).to(device)
     cfg = OmegaConf.load("configs/config.yml")   
     model = instantiate(cfg.classifier)
     model._load_weights()
@@ -87,13 +90,13 @@ def prepare_imagenet_cw(num_samples=None):
     data_attacker = DatasetAttacker(image_path=imagenet_val_source_dir, 
                                     target_path='image_data/CW',
                                     device=device,
-                                    attacker=torchattacks.CW(model, c=1, kappa=0, steps=50, lr=0.03))
+                                    normalize=True,
+                                    attacker=torchattacks.CW(model, c=0.1, kappa=0, steps=50, lr=0.03))
     data_attacker.attack(num_samples)
 
 def prepare_imagenet_cw_no_resize(num_samples=None):
     imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # model = resnet50(weights=ResNet50_Weights.DEFAULT).to(device)
     cfg = OmegaConf.load("configs/config.yml")   
     model = instantiate(cfg.classifier)
     model._load_weights()
@@ -102,13 +105,13 @@ def prepare_imagenet_cw_no_resize(num_samples=None):
     data_attacker = DatasetAttacker_NoResize(image_path=imagenet_val_source_dir, 
                                     target_path='image_data/CW',
                                     device=device,
+                                    normalize=True,
                                     attacker=torchattacks.CW(model, c=0.1, kappa=0, steps=50, lr=0.03))
     data_attacker.attack(num_samples)
 
 def prepare_imagenet_fgsm(num_samples=None):
     imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # model = resnet50(weights=ResNet50_Weights.DEFAULT).to(device)
     cfg = OmegaConf.load("configs/config.yml")   
     model = instantiate(cfg.classifier)
     model._load_weights()
@@ -117,13 +120,13 @@ def prepare_imagenet_fgsm(num_samples=None):
     data_attacker = DatasetAttacker(image_path=imagenet_val_source_dir, 
                                     target_path='image_data/FGSM',
                                     device=device,
+                                    normalize=True,
                                     attacker=torchattacks.FGSM(model, eps=0.05))
     data_attacker.attack(num_samples)
 
 def prepare_imagenet_fgsm_no_resize(num_samples=None):
     imagenet_val_source_dir = 'image_data/imagenet-object-localization-challenge/ILSVRC/Data/CLS-LOC/val'
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # model = resnet50(weights=ResNet50_Weights.DEFAULT).to(device)
     cfg = OmegaConf.load("configs/config.yml")   
     model = instantiate(cfg.classifier)
     model._load_weights()
@@ -132,6 +135,7 @@ def prepare_imagenet_fgsm_no_resize(num_samples=None):
     data_attacker = DatasetAttacker_NoResize(image_path=imagenet_val_source_dir, 
                                     target_path='image_data/FGSM',
                                     device=device,
+                                    normalize=True,
                                     attacker=torchattacks.FGSM(model, eps=0.05))
     data_attacker.attack(num_samples)
 
@@ -247,24 +251,56 @@ def extract_classifier():
     model = instantiate(cfg.classifier)
     weight_path = 'downloads/r50_1x_sk0_supervised'
     extract_classifier_weights(model, weight_path, model_save_path)
+    
+def plot_tsne_cifar():
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    cfg = OmegaConf.load("configs/config_cifar.yml")
+    tsne = TSNE(n_components=2,  perplexity=30, n_iter=5000)
+    # pca = PCA(n_components=2)
+    model = instantiate(cfg.classifier)
+    # model = instantiate(cfg.simclr)
+    model._load_weights()
+    backbone = model.backbone
+    backbone.to(device)
+    backbone.eval()
+    
+    dataset = CIFAR10(cfg.cifar_data_module.args.cifar10_path, train=True, download=False,
+                      transform=T.Compose([T.ToTensor(), T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])]))
+    # dataset = CIFAR10_NPY(cfg.cifar_data_module.args.cifar10_pgd_path,
+                    #   transform=T.Compose([T.ToTensor(), T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])]))
+    sampler = RandomSampler(dataset, replacement=True, num_samples=2000)
+    dataloader = DataLoader(dataset, batch_size=256, sampler=sampler, drop_last=False)   
+    Feats = []
+    Y_tsnes = [] 
+    with torch.inference_mode():
+        for _, (X, y) in enumerate(tqdm(dataloader)):
+            X = X.to(device)
+            feat = backbone(X)
+            Feats.append(feat.cpu().numpy())
+            Y_tsnes.append(y) 
+    Feats = np.concatenate(Feats)         
+    X_tsnes = tsne.fit_transform(Feats)
+    # X_tsnes = pca.fit_transform(Feats)
+    Y_tsnes = np.concatenate(Y_tsnes)
+    fig = px.scatter(x=X_tsnes[:, 0], y=X_tsnes[:, 1], color=Y_tsnes)
+    # fig = px.scatter_3d(x=X_tsnes[:, 0], y=X_tsnes[:, 1], z=X_tsnes[:, 2], color=Y_tsnes)
+    fig.show()
 
 
 if __name__ == '__main__':
+    os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
     # prepare_imagenet_val_set()
     # prepare_imagenet_pgd(1000)
-    prepare_imagenet_pgd_no_resize(1000)
-    # prepare_imagenet_cw(1000)
-    # prepare_imagenet_cw_no_resize(1000)
     # prepare_imagenet_pgd_no_resize(1000)
     # prepare_imagenet_cw(1000)
     # prepare_imagenet_cw_no_resize(1000)
     # prepare_imagenet_fgsm(1000)
     # prepare_imagenet_fgsm_no_resize(1000)
     # prepare_cifar10_attack()
-    # show_difference_imagenet()
+    show_difference_imagenet()
     # show_difference_cifar10()
-    # prepare_imagenet_fgsm_no_resize(1000)
     # download_models()
     # extract_simclr()
     # extract_classifier()
+    # plot_tsne_cifar()
     

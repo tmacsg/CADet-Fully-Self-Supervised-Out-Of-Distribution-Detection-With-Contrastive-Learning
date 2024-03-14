@@ -126,5 +126,5 @@ class MMD(pl.LightningModule):
         return aurocs
 
     def _extract_backbone(self, base_model):
-        base_model.load_state_dict(torch.load(base_model.ckpt_path)['state_dict'])
+        base_model._load_weights()
         return base_model.backbone

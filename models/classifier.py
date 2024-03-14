@@ -9,9 +9,11 @@ class Classifier(pl.LightningModule):
         super().__init__()
         self.example_input_array = torch.Tensor(1, 3, 224, 224) # print summary 
 
-        self.backbone = backbone
+        self.backbone = backbone      
         self.fc = nn.Linear(self.backbone.hidden_dim, args.num_classes)
         self.lr=args.lr
+        self.mode = args.mode
+        assert self.mode in ['train', 'validate']
         self.momentum=args.momentum 
         self.weight_decay=args.weight_decay
         self.max_epochs = args.max_epochs
@@ -19,6 +21,11 @@ class Classifier(pl.LightningModule):
 
         self.criterion = nn.CrossEntropyLoss()
         self.outputs = []
+        
+        if self.mode == 'validate':
+            print(f'validation mode. loading model from {self.ckpt_path}...')
+            self._load_weights()
+            deactivate_requires_grad(self)
 
     def forward(self, x):
         y_hat = self.backbone(x).flatten(start_dim=1)
@@ -39,15 +46,15 @@ class Classifier(pl.LightningModule):
         acc = self._compute_acc()
         self.log("val_acc_cls", acc, on_epoch=True, prog_bar=True)
 
-    def on_test_start(self):
-        self._load_weights()
+    # def on_test_start(self):
+    #     self._load_weights()
 
-    def test_step(self, batch, batch_idx):
-        self._infer_batch(batch)
+    # def test_step(self, batch, batch_idx):
+    #     self._infer_batch(batch)
 
-    def on_test_epoch_end(self):
-        acc = self._compute_acc()
-        self.log("test_acc_cls", acc, on_epoch=True, prog_bar=True)
+    # def on_test_epoch_end(self):
+    #     acc = self._compute_acc()
+    #     self.log("test_acc_cls", acc, on_epoch=True, prog_bar=True)
             
     def _infer_batch(self, batch):
         x, y = batch
@@ -69,7 +76,13 @@ class Classifier(pl.LightningModule):
         return acc
     
     def _load_weights(self):
-        self.load_state_dict(torch.load(self.ckpt_path)['state_dict'])
+        ckpt = torch.load(self.ckpt_path)
+        if 'state_dict' in ckpt:
+            ckpt = ckpt['state_dict']
+        keys = [key for key in ckpt.keys()  if key.startswith(('layer', 'conv', 'bn'))]       
+        for key in keys:
+            ckpt[f'backbone.{key}'] = ckpt.pop(key)
+        self.load_state_dict(ckpt, strict=False)
 
     def configure_optimizers(self):
         optim = torch.optim.SGD(

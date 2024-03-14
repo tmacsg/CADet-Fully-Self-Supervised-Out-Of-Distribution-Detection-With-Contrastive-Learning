@@ -22,14 +22,15 @@ class CADetTransform():
         self,
         num_tranforms: int = 50,
         input_size: int = 224,
-        scale: float = 0.75,
         hf_prob: float = 0.5
     ):
         view_transform = T.Compose([
-            T.RandomResizedCrop(size=input_size, scale=(scale, scale)),
+            T.RandomResizedCrop(size=input_size, scale=(0.75, 0.75)),
             T.RandomHorizontalFlip(p=hf_prob),
-            T.ToTensor()
+            T.ToTensor(),
+            T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])
         ])
+
         self.transforms = [view_transform for _ in range(num_tranforms)]
 
     def __call__(self, image):
@@ -177,7 +178,7 @@ class CIFARDataModule(pl.LightningDataModule):
                 self.test_dataset_pgd = CIFAR10_NPY(root=self.cifar10_pgd_path, transform=transform)
                 self.test_dataset_cw =CIFAR10_NPY(root=self.cifar10_cw_path, transform=transform) 
                 self.test_dataset_fgsm = CIFAR10_NPY(root=self.cifar10_fgsm_path, transform=transform) 
-
+                
     def train_dataloader(self): 
         return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=8, 
                               pin_memory=True, drop_last=True, shuffle=True, persistent_workers=True) 
@@ -264,25 +265,27 @@ class ImageNetDataModule(pl.LightningDataModule):
         self.cadet_n_tests = args.cadet_n_tests
         self.cadet_n_transforms = args.cadet_n_transforms
 
-        # self.normalize = T.Normalize(mean=IMAGENET_NORMALIZE["mean"], std=IMAGENET_NORMALIZE["std"])
+        self.normalize = T.Normalize(mean=IMAGENET_NORMALIZE["mean"], std=IMAGENET_NORMALIZE["std"])
         self.test_transform = T.Compose([T.Resize([256,256]),
                                         T.CenterCrop(size=224), 
-                                        T.ToTensor()])
+                                        T.ToTensor(),
+                                        self.normalize])
         
     def setup(self, stage: str):
         if self.mode == 'supervised':
             if stage == 'fit':
                 self.train_dataset = ImageFolder(root=self.train_path, transform=T.Compose([T.RandomResizedCrop(224),
                                                                                             T.RandomHorizontalFlip(),
-                                                                                            T.ToTensor()]))
+                                                                                            T.ToTensor(),
+                                                                                             self.normalize]))
                 self.val_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)
 
-            if stage == 'test':
-                # self.test_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)   
-                # self.test_dataset = ImageFolder(root=self.fgsm_path, transform=self.test_transform)  
-                # self.test_dataset = ImageFolder(root=self.pgd_path, transform=self.test_transform)
-                self.test_dataset = ImageFolder(root=self.cw_path, transform=self.test_transform) 
-                # self.test_dataset = ImageFolder(root=self.imagenet_o_path, transform=self.test_transform) 
+            if stage == 'test' or stage == 'validate':
+                # self.val_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)   
+                # self.val_dataset = ImageFolder(root=self.fgsm_path, transform=self.test_transform)  
+                # self.val_dataset = ImageFolder(root=self.pgd_path, transform=self.test_transform)
+                self.val_dataset = ImageFolder(root=self.cw_path, transform=self.test_transform) 
+                # self.val_dataset = ImageFolder(root=self.imagenet_o_path, transform=self.test_transform) 
 
         if self.mode == 'unsupervised':
             if stage == 'fit':
@@ -308,8 +311,8 @@ class ImageNetDataModule(pl.LightningDataModule):
         if self.mode == 'cadet':
             if stage == 'test':
                 transform = CADetTransform(num_tranforms=self.cadet_n_transforms)
-                self.test_dataset_same_dist = ImageFolder(root=self.train_path, transform=transform)
-                # self.test_dataset_same_dist = ImageFolder(root=self.val_path, transform=transform)
+                # self.test_dataset_same_dist = ImageFolder(root=self.train_path, transform=transform)
+                self.test_dataset_same_dist = ImageFolder(root=self.val_path, transform=transform)
                 self.test_dataset_imagenet_o = ImageFolder(root=self.imagenet_o_path, transform=transform)
                 self.test_dataset_inaturalist = ImageFolder(root=self.inaturalist_path, transform=transform)
                 self.test_dataset_pgd = ImageFolder(root=self.pgd_path, transform=transform)
@@ -326,7 +329,7 @@ class ImageNetDataModule(pl.LightningDataModule):
         
     def test_dataloader(self):
         if self.mode == 'supervised':
-            return DataLoader(self.test_dataset, batch_size=self.bacth_size, num_workers=8, 
+            return DataLoader(self.val_dataset, batch_size=self.bacth_size, num_workers=8, 
                               pin_memory=True, drop_last=True, shuffle=False, persistent_workers=True) 
         if self.mode == 'mmd':
             batch_size = max(self.mmd_sample_sizes)
@@ -448,7 +451,7 @@ class DatasetAttacker_NoResize:
     def save(self, images, labels, image_sizes, image_names):
         for image, label, _, image_name in zip(images, labels, image_sizes, image_names):
             if self.normalize:
-                image = self.attacker.inverse_normalize(image)
+                image = self.attacker.inverse_normalize(image).squeeze(0)
             x = self._to_pil_image(image)
             # import matplotlib.pyplot as plt
             # plt.imshow(x)
@@ -500,3 +503,4 @@ class DatasetAttacker_CIFAR10:
                             
     def _to_pil_image(self, x):
         return T.ToPILImage()(x)
+    

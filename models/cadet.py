@@ -108,8 +108,8 @@ class CADet(pl.LightningModule):
             m_out = outer_sims.sum() 
             m_outs.append(m_out.item())
 
-        m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms + 1))
-        # m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms - 1))
+        # m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms + 1))
+        m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms - 1))
         m_outs = torch.tensor(m_outs) / (self.n_transforms * self.n_transforms * self.sample_size_1)
         self.gamma = torch.sqrt(torch.var(m_ins) / torch.var(m_outs))
         print(f'Calibrated gamma: {self.gamma}')
@@ -117,8 +117,8 @@ class CADet(pl.LightningModule):
     
     def compute(self, X_test_feat):
         intra_sim = self._cal_similarity(X_test_feat, X_test_feat)
-        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms + 1)) 
-        # m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms - 1)) 
+        # m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms + 1)) 
+        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms - 1)) 
         outer_sims = torch.vmap(lambda arg: self._cal_similarity(X_test_feat, arg).sum())(self.X_1_feats)
         m_out = outer_sims.sum() / (self.n_transforms * self.n_transforms * self.sample_size_1)
         return m_in, m_out
@@ -150,5 +150,5 @@ class CADet(pl.LightningModule):
         return aurocs
         
     def _extract_backbone(self, base_model):
-        base_model.load_state_dict(torch.load(base_model.ckpt_path)['state_dict'])
+        base_model._load_weights()
         return base_model.backbone
