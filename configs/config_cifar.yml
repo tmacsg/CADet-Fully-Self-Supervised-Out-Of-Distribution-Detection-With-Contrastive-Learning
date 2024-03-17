@@ -6,6 +6,7 @@ classifier:
     _target_: models.resnet.ResNet50 
     cifar_head: True
   args:  
+    mode: train
     num_classes: 10
     lr: 0.15
     momentum: 0.9
@@ -36,8 +37,22 @@ mmd:
   args:
     n_tests: 100
     n_perms: 500
+    sample_sizes: [50, 100, 200,]# 500, 1000]
+    # sample_sizes: [3, 5, 10, 20]
+    sig_level: 0.05
+    kernel: cosine
+    clean_calib: True
+    image_set_q: same_dist
+
+mmd_ss:
+  _target_: models.mmd_ss.MMD_SS
+  # base_model: ${classifier}
+  base_model: ${simclr}
+  args:
+    n_tests: 100
+    n_perms: 500
     # sample_sizes: [50, 100, 200, 500]#, 1000]
-    sample_sizes: [3, 5, 10]
+    # sample_sizes: [3, 5, 10, 20]
     sig_level: 0.05
     clean_calib: True
     image_set_q: same_dist
@@ -49,14 +64,14 @@ cadet:
   val_dataset: ${cadet_val_dataset}
   args:
     test_image_sets: ['same_dist', 'cifar10_1', 'pgd', 'cw', 'fgsm']
-    n_tests: 100
-    n_transforms: 50
-    sample_size_1: 300
-    sample_size_2: 2000
-    # n_tests: 5
-    # n_transforms: 5
-    # sample_size_1: 3
-    # sample_size_2: 20
+    # n_tests: 100
+    # n_transforms: 50
+    # sample_size_1: 300
+    # sample_size_2: 2000
+    n_tests: 5
+    n_transforms: 5
+    sample_size_1: 3
+    sample_size_2: 20
 
 cifar_data_module:
   _target_: utils.data_utils.CIFARDataModule
@@ -67,6 +82,7 @@ cifar_data_module:
     cifar10_cw_path: image_data/Cifar10/cifar10_val_CW.npy
     cifar10_pgd_path: image_data/Cifar10/cifar10_val_PGD.npy
     mode: supervised
+    num_classes: 10
     batch_size: 256
     mmd_sample_sizes: ${mmd.args.sample_sizes}
     mmd_n_tests: ${mmd.args.n_tests}

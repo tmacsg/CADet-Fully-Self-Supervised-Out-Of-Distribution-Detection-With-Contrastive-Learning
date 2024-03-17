@@ -1,6 +1,6 @@
 import pytorch_lightning as pl
 import torch
-from utils.stat_utils import mmd_permutation_test, mmd_permutation_test_cc
+from utils.stat_utils import mmd_permutation_test, mmd_permutation_test_cc, GuassianKernel, CosineKernel
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
@@ -17,6 +17,8 @@ class MMD(pl.LightningModule):
         self.n_perms = args.n_perms
         self.sample_sizes = args.sample_sizes
         self.sig_level = args.sig_level
+        assert args.kernel in ['guassian', 'cosine']
+        self.kernel = GuassianKernel() if args.kernel == 'guassian' else CosineKernel()
         self.clean_calib = args.clean_calib
 
         self.hidden_dim = self.backbone.hidden_dim
@@ -61,18 +63,22 @@ class MMD(pl.LightningModule):
                 p_value_diff_dist, mmd_vals_diff_dist, est_diff_dist = mmd_permutation_test_cc(feature_s1, 
                                                                                             feature_s2, 
                                                                                             feature_q1, 
-                                                                                            self.n_perms)
+                                                                                            self.n_perms,
+                                                                                            self.kernel)
                 p_value_same_dist, mmd_vals_same_dist, est_same_dist = mmd_permutation_test_cc(feature_s1, 
                                                                                             feature_s2, 
                                                                                             feature_s3, 
-                                                                                            self.n_perms)
+                                                                                            self.n_perms,
+                                                                                            self.kernel)
             else:
                 p_value_diff_dist, mmd_vals_diff_dist, est_diff_dist = mmd_permutation_test(feature_s1, 
                                                                                             feature_q1, 
-                                                                                            self.n_perms)
+                                                                                            self.n_perms,
+                                                                                            self.kernel)
                 p_value_same_dist, mmd_vals_same_dist, est_same_dist = mmd_permutation_test(feature_s1, 
                                                                                             feature_s3, 
-                                                                                            self.n_perms)
+                                                                                            self.n_perms,
+                                                                                            self.kernel)
             threshold_diff_dist = torch.quantile(mmd_vals_diff_dist, 1 - self.sig_level).item()
             threshold_same_dist = torch.quantile(mmd_vals_same_dist, 1 - self.sig_level).item()
             self.p_value_outputs[f'sample_size{sample_size}_same_dist'].loc[batch_idx] = [batch_idx, p_value_same_dist, threshold_same_dist, est_same_dist]
