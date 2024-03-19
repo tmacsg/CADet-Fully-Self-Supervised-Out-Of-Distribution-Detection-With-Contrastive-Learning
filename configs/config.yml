@@ -29,8 +29,11 @@ simclr:
     weight_decay: 1e-6
     max_epochs: 200
     # ckpt_path: downloads/resnet-50_simclr.ckpt
-    ckpt_path: imagenet_ckpts/resnet-50_linear_eval_mmlab.pth
-
+    # ckpt_path: imagenet_ckpts/resnet-50_linear_eval_mmlab.pth
+    # ckpt_path: imagenet_ckpts/resnet-50_barlowtwins_mmlab.pth
+    ckpt_path: imagenet_ckpts/resnet-50_swav_mmlab.pth
+    
+    
 mmd:
   _target_: models.mmd.MMD
   # base_model: ${classifier}

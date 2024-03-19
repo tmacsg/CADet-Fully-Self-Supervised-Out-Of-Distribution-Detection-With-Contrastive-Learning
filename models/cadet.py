@@ -12,6 +12,7 @@ import os
 from utils.data_utils import ImageNetDataModule
 from lightly.models.utils import deactivate_requires_grad
 from sklearn import metrics
+import numpy as np
 
 class CADet(pl.LightningModule):
     def __init__(self, base_model, val_dataset, args):
@@ -36,8 +37,17 @@ class CADet(pl.LightningModule):
         self.m_value_outputs = None
 
     def on_test_start(self):
-        val_dataset_1, val_dataset_2, _ = random_split(self.val_dataset, self.val_split)
-        self.calibrate(val_dataset_1, val_dataset_2)
+        if os.path.exists('CADet_Calib/CADet_Calib.npy'):
+            print("load calibration data from file...")
+            calib_data = np.load('CADet_Calib/CADet_Calib.npy', allow_pickle=True)
+            self.X_1_feats = torch.tensor(calib_data.item()['features'], device=self.device)
+            self.scores = torch.tensor(calib_data.item()['scores'], device=self.device)
+            self.gamma = calib_data.item()['gamma'].item()
+        else:
+            print("No calibration file found, do calibration...")
+            val_dataset_1, val_dataset_2, _ = random_split(self.val_dataset, self.val_split)
+            self.calibrate(val_dataset_1, val_dataset_2)
+            
         for key in self.test_image_sets: 
             self.p_value_outputs[key] = pd.DataFrame(columns=['test_step', 'p_value'])
             self.m_in[key] = torch.zeros(self.n_tests)
@@ -61,7 +71,7 @@ class CADet(pl.LightningModule):
             X_test_feat = self.backbone(X_test)
             m_in, m_out = self.compute(X_test_feat)
             test_score = m_in + self.gamma * m_out
-            p_value = (torch.sum(test_score.cpu() > self.scores).item() ) / (len(self.scores) ) 
+            p_value = (torch.sum(test_score > self.scores).item() + 1) / (len(self.scores) + 1) 
             self.p_value_outputs[key].loc[batch_idx] = [batch_idx, p_value]
             self.m_in[key][batch_idx] = m_in
             self.m_out[key][batch_idx] = m_out
@@ -81,6 +91,11 @@ class CADet(pl.LightningModule):
         self.m_value_outputs = None
     
     def _cal_similarity(self, input0, input1):
+        # inputs01 = torch.cat((input0, input1), 0)
+        # dist = torch.cdist(inputs01, inputs01)
+        # sigma = 1 / ((dist ** 2).median())
+        # kernels =  torch.exp(- sigma * torch.cdist(input0,input1) ** 2)
+        # return kernels
         out0 = F.normalize(input0, dim=1)
         out1 = F.normalize(input1, dim=1)
         return out0 @ out1.t()
@@ -104,22 +119,30 @@ class CADet(pl.LightningModule):
             intra_sim = self._cal_similarity(X_2_feat, X_2_feat)
             m_in = intra_sim.sum() - intra_sim.trace()
             m_ins.append(m_in.item())
-            outer_sims = torch.vmap(lambda arg: self._cal_similarity(X_2_feat, arg).sum(), in_dims=0)(self.X_1_feats)
+            outer_sims = torch.vmap(lambda arg: self._cal_similarity(X_2_feat, arg))(self.X_1_feats)
             m_out = outer_sims.sum() 
             m_outs.append(m_out.item())
 
         # m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms + 1))
-        m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms - 1))
-        m_outs = torch.tensor(m_outs) / (self.n_transforms * self.n_transforms * self.sample_size_1)
-        self.gamma = torch.sqrt(torch.var(m_ins) / torch.var(m_outs))
+        m_ins = torch.tensor(m_ins, device=self.device) / (self.n_transforms * (self.n_transforms - 1))
+        m_outs = torch.tensor(m_outs, device=self.device) / (self.n_transforms * self.n_transforms * self.sample_size_1)
+        self.gamma = torch.sqrt(m_ins.var() / m_outs.var())
         print(f'Calibrated gamma: {self.gamma}')
         self.scores = m_ins + self.gamma * m_outs
+        
+        calibrated_data = {
+            'features': self.X_1_feats.cpu().numpy(),
+            'scores': self.scores.cpu().numpy(),
+            'gamma': self.gamma.cpu().numpy(),
+        }
+        os.makedirs('CADet_Calib', exist_ok=True)
+        np.save(os.path.join('CADet_Calib', 'CADet_Calib.npy'), calibrated_data)
     
     def compute(self, X_test_feat):
         intra_sim = self._cal_similarity(X_test_feat, X_test_feat)
         # m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms + 1)) 
-        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms - 1)) 
-        outer_sims = torch.vmap(lambda arg: self._cal_similarity(X_test_feat, arg).sum())(self.X_1_feats)
+        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms -1 )) 
+        outer_sims = torch.vmap(lambda arg: self._cal_similarity(X_test_feat, arg))(self.X_1_feats)
         m_out = outer_sims.sum() / (self.n_transforms * self.n_transforms * self.sample_size_1)
         return m_in, m_out
     

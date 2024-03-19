@@ -18,7 +18,7 @@ class GuassianKernel(Kernel):
         distances, sigma = self._calibrate_sigma(sample_p, sample_q)
         kernels =  torch.exp(- sigma * distances ** 2)
         return kernels
-              
+                      
     def _calibrate_sigma(self, sample_p, sample_q):
         sample_pq = torch.cat((sample_p, sample_q), 0)
         distances = self._pdist(sample_pq, sample_pq)
@@ -43,6 +43,7 @@ class CosineKernel(Kernel):
         sample_pq = F.normalize(sample_pq, dim=1)
         kernels = sample_pq @ sample_pq.t()
         return kernels  
+    
 
 def mmd_unbiased(sample_p: torch.Tensor,
                  sample_q: torch.Tensor,
@@ -68,7 +69,6 @@ def mmd_unbiased(sample_p: torch.Tensor,
             a00 * (k_1.sum() - torch.trace(k_1)) +
             a11 * (k_2.sum() - torch.trace(k_2)))
     return mmd.item()
-
 
 def mmd_permutation_test(sample_p: torch.Tensor,
                      sample_q: torch.Tensor,

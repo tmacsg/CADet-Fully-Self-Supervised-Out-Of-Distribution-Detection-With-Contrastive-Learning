@@ -17,28 +17,27 @@ import torch
 import re
 from tqdm import tqdm
 import random
-from itertools import chain
 
-class CADetTransform():
+class CADetTransform:
     def __init__(
         self,
         num_tranforms: int = 50,
         input_size: int = 224,
         hf_prob: float = 0.5
     ):
-        view_transform = T.Compose([
-            T.RandomResizedCrop(size=input_size, scale=(0.75, 0.75)),
-            T.RandomHorizontalFlip(p=hf_prob),
-            T.ToTensor(),
-            T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])
-        ])
-
+        # view_transform = T.Compose([
+        #     T.RandomResizedCrop(size=input_size, scale=(0.75, 0.75)),
+        #     # T.RandomHorizontalFlip(p=hf_prob),
+        #     T.ToTensor(),
+        #     T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])
+        # ])
+        view_transform = SimCLRViewTransform()
         self.transforms = [view_transform for _ in range(num_tranforms)]
 
     def __call__(self, image):
          return [transform(image) for transform in self.transforms]
     
-class CADetTransform_CIFAR():
+class CADetTransform_CIFAR:
     def __init__(
         self,
         num_tranforms: int = 50,
@@ -50,13 +49,13 @@ class CADetTransform_CIFAR():
         #     T.ToTensor(),
         #     T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])
         # ])
-        view_transform = SimCLRViewTransform(input_size=32)
+        view_transform = SimCLRViewTransform(input_size=32, min_scale=0.75, cj_prob=0)
         self.transforms = [view_transform for _ in range(num_tranforms)]
 
     def __call__(self, image):
          return [transform(image) for transform in self.transforms]
     
-class PixelFlick():
+class PixelFlick:
     def __init__(self, scale):
         self.scale = scale
 
@@ -181,8 +180,9 @@ class CIFARDataModule(pl.LightningDataModule):
         if self.mode == 'cadet':
             if stage == 'test':
                 transform = CADetTransform_CIFAR(num_tranforms=self.cadet_n_transforms)
-                self.test_dataset_same_dist = CIFAR10(root=self.cifar10_path, train=True, download=True, transform=transform) 
+                self.test_dataset_same_dist = CIFAR10(root=self.cifar10_path, train=False, download=True, transform=transform) 
                 self.test_dataset_cifar10_1 = CIFAR10_NPY(root=self.cifar10_1_path, transform=transform)
+                # self.test_dataset_cifar10_1 = ImageFolder('//wsl.localhost/Ubuntu/home/bingbing/codes/OpenOOD/data/images_classic/cifar100/test',  transform=transform)
                 self.test_dataset_pgd = CIFAR10_NPY(root=self.cifar10_pgd_path, transform=transform)
                 self.test_dataset_cw =CIFAR10_NPY(root=self.cifar10_cw_path, transform=transform) 
                 self.test_dataset_fgsm = CIFAR10_NPY(root=self.cifar10_fgsm_path, transform=transform) 
@@ -215,8 +215,10 @@ class CIFARDataModule(pl.LightningDataModule):
         if self.mode == 'mmd_ss':
             # mmd test with single sample                          
             indexs = [[] for _ in range(self.num_classes)]  
+                  
             for idx, (_, class_idx) in enumerate(self.dataset_s):
                 indexs[class_idx].append(idx)
+            
             sample_indexes_s = []
             for _ in range(self.mmd_n_tests):
                 for i in range(self.num_classes):
@@ -239,11 +241,13 @@ class CIFARDataModule(pl.LightningDataModule):
             sampler_test_pgd = RandomSampler(self.test_dataset_pgd, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_cw = RandomSampler(self.test_dataset_cw, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_fgsm = RandomSampler(self.test_dataset_fgsm, replacement=False, num_samples=self.cadet_n_tests)
+            
             dataloader_test_same_dist = DataLoader(self.test_dataset_same_dist, batch_size=1, sampler=sampler_test_same_dist, collate_fn=self.cadet_collate_fn)
             dataloader_test_cifar10_1 = DataLoader(self.test_dataset_cifar10_1, batch_size=1, sampler=sampler_test_cifar10_1, collate_fn=self.cadet_collate_fn)
             dataloader_test_pgd = DataLoader(self.test_dataset_pgd, batch_size=1, sampler=sampler_test_pgd, collate_fn=self.cadet_collate_fn)
             dataloader_test_cw = DataLoader(self.test_dataset_cw, batch_size=1, sampler=sampler_test_cw, collate_fn=self.cadet_collate_fn)
             dataloader_test_fgsm = DataLoader(self.test_dataset_fgsm, batch_size=1, sampler=sampler_test_fgsm, collate_fn=self.cadet_collate_fn)
+            
             return CombinedLoader({'same_dist': dataloader_test_same_dist,  'cifar10_1': dataloader_test_cifar10_1,
                                    'pgd': dataloader_test_pgd, 'cw': dataloader_test_cw, 'fgsm': dataloader_test_fgsm})
 
@@ -299,8 +303,8 @@ class ImageNetDataModule(pl.LightningDataModule):
                 self.val_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)
 
             if stage == 'test' or stage == 'validate':
-                transform = SimCLRViewTransform()
-                # self.val_dataset = ImageFolder(root=self.val_path, transform=transform)   
+                # transform = SimCLRViewTransform()
+                self.val_dataset = ImageFolder(root=self.val_path, transform=self.test_transform)   
                 # self.val_dataset = ImageFolder(root=self.fgsm_path, transform=transform)  
                 # self.val_dataset = ImageFolder(root=self.pgd_path, transform=transform)
                 # self.val_dataset = ImageFolder(root=self.cw_path, transform=self.test_transform) 
@@ -348,8 +352,7 @@ class ImageNetDataModule(pl.LightningDataModule):
                
         if self.mode == 'cadet':
             if stage == 'test':
-                # transform = CADetTransform(num_tranforms=self.cadet_n_transforms)
-                transform = self.test_transform
+                transform = CADetTransform(num_tranforms=self.cadet_n_transforms)
                 # self.test_dataset_same_dist = ImageFolder(root=self.train_path, transform=transform)
                 self.test_dataset_same_dist = ImageFolder(root=self.val_path, transform=transform)
                 self.test_dataset_imagenet_o = ImageFolder(root=self.imagenet_o_path, transform=transform)

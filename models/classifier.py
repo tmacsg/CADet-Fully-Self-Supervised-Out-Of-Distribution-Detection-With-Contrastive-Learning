@@ -76,6 +76,7 @@ class Classifier(pl.LightningModule):
         return acc
     
     def _load_weights(self):
+        print('load weights from: ', self.ckpt_path)
         ckpt = torch.load(self.ckpt_path)
         if 'state_dict' in ckpt:
             ckpt = ckpt['state_dict']

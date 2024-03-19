@@ -97,8 +97,9 @@ def test_simclr_cifar():
 def test_mmd_imagenet():
     cfg = OmegaConf.load('configs/config.yml')
     cfg.imagenet_data_module.args.mode = 'mmd'
-    cfg.mmd.args.clean_calib = False
-    cfg.mmd.args.image_set_q = 'imagenet_o'
+    cfg.mmd.args.kernel = 'guassian'
+    cfg.mmd.args.clean_calib = True
+    cfg.mmd.args.image_set_q = 'pgd'
     model = instantiate(cfg.mmd)
     data_module = instantiate(cfg.imagenet_data_module)
     trainer = pl.Trainer(devices=1)
@@ -107,7 +108,7 @@ def test_mmd_imagenet():
 def test_mmd_cifar():
     cfg = OmegaConf.load('configs/config_cifar.yml')
     cfg.cifar_data_module.args.mode = 'mmd'
-    cfg.mmd.args.kernel = 'cosine'
+    cfg.mmd.args.kernel = 'guassian'
     cfg.mmd.args.clean_calib = True
     cfg.mmd.args.image_set_q = 'cifar10_1'
     model = instantiate(cfg.mmd)
@@ -145,16 +146,19 @@ def test_mmd_ss_cifar():
 if __name__ == '__main__':
     os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
     pl.seed_everything(42)
-    # test_classifier_imagenet()
-    # eval_simclr_imagenet()
-    # test_simclr_imagenet()
-    # test_mmd_imagenet()
-    # test_cadet_imagenet()
-    # test_cadet_cifar()
-    test_mmd_cifar()
     # test_classifier_cifar()
     # test_simclr_cifar()
-    # eval_simclr_cifar()
+    # test_cadet_cifar()
+    # test_mmd_cifar()
     # test_mmd_ss_cifar()
+    
+    # test_classifier_imagenet()
+    # test_simclr_imagenet()
+    # test_mmd_imagenet()
+    test_cadet_imagenet()
+    
+    
+   
+    
     
     

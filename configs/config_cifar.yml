@@ -32,12 +32,12 @@ simclr:
 
 mmd:
   _target_: models.mmd.MMD
-  base_model: ${classifier}
-  # base_model: ${simclr}
+  # base_model: ${classifier}
+  base_model: ${simclr}
   args:
     n_tests: 100
     n_perms: 500
-    sample_sizes: [50, 100, 200,]# 500, 1000]
+    sample_sizes: [3, 5, 10, 50, 100, 200]# 500, 1000]
     # sample_sizes: [3, 5, 10, 20]
     sig_level: 0.05
     kernel: cosine
@@ -51,8 +51,8 @@ mmd_ss:
   args:
     n_tests: 100
     n_perms: 500
-    # sample_sizes: [50, 100, 200, 500]#, 1000]
-    # sample_sizes: [3, 5, 10, 20]
+    # sample_sizes: [50, 100, 200] #, 500], 1000]
+    sample_sizes: [5, 20, 50]
     sig_level: 0.05
     clean_calib: True
     image_set_q: same_dist
@@ -64,14 +64,14 @@ cadet:
   val_dataset: ${cadet_val_dataset}
   args:
     test_image_sets: ['same_dist', 'cifar10_1', 'pgd', 'cw', 'fgsm']
-    # n_tests: 100
-    # n_transforms: 50
-    # sample_size_1: 300
-    # sample_size_2: 2000
-    n_tests: 5
-    n_transforms: 5
-    sample_size_1: 3
-    sample_size_2: 20
+    n_tests: 100
+    n_transforms: 50
+    sample_size_1: 2000
+    sample_size_2: 300
+    # n_tests: 5
+    # n_transforms: 5
+    # sample_size_1: 3
+    # sample_size_2: 20
 
 cifar_data_module:
   _target_: utils.data_utils.CIFARDataModule
