@@ -5,6 +5,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.loggers import TensorBoardLogger
 import os
+import torch
 
 def test_classifier_imagenet():
     cfg = OmegaConf.load('configs/config.yml')

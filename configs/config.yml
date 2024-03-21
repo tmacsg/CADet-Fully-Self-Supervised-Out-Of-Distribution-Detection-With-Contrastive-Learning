@@ -29,10 +29,10 @@ simclr:
     weight_decay: 1e-6
     max_epochs: 200
     # ckpt_path: downloads/resnet-50_simclr.ckpt
-    # ckpt_path: imagenet_ckpts/resnet-50_linear_eval_mmlab.pth
+    ckpt_path: imagenet_ckpts/resnet-50_simclr_mmlab.pth
+    # ckpt_path: imagenet_ckpts/resnet-50_simsiam_mmlab.pth
     # ckpt_path: imagenet_ckpts/resnet-50_barlowtwins_mmlab.pth
-    ckpt_path: imagenet_ckpts/resnet-50_swav_mmlab.pth
-    
+    # ckpt_path: imagenet_ckpts/resnet-50_swav_mmlab.pth 
     
 mmd:
   _target_: models.mmd.MMD
@@ -53,14 +53,14 @@ cadet:
   # base_model: ${simclr}
   val_dataset: ${cadet_val_dataset}
   args:
-    test_image_sets: ['same_dist', 'imagenet_o', 'inaturalist', 'pgd', 'cw', 'fgsm']
+    test_image_sets: ['same_dist', 'inaturalist', 'imagenet_o', 'pgd', 'cw', 'fgsm']
     n_tests: 100
     n_transforms: 50
     sample_size_1: 300
     sample_size_2: 2000
-    # n_tests: 5
-    # n_transforms: 5
-    # sample_size_1: 3
+    # n_tests: 10
+    # n_transforms: 50
+    # sample_size_1: 20
     # sample_size_2: 20
 
 imagenet_data_module:

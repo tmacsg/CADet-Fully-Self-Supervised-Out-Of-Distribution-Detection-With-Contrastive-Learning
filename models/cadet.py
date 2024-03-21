@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.datasets import ImageFolder
 from utils.data_utils import CADetTransform
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Subset
 from tqdm import tqdm
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,6 +13,7 @@ from utils.data_utils import ImageNetDataModule
 from lightly.models.utils import deactivate_requires_grad
 from sklearn import metrics
 import numpy as np
+from utils.stat_utils import GuassianKernel
 
 class CADet(pl.LightningModule):
     def __init__(self, base_model, val_dataset, args):
@@ -21,19 +22,21 @@ class CADet(pl.LightningModule):
         self.backbone = self._extract_backbone(base_model)
         deactivate_requires_grad(self.backbone)
         self.test_image_sets = args.test_image_sets
+        assert self.test_image_sets[0] == 'same_dist'
         self.n_tests = args.n_tests
         self.n_transforms = args.n_transforms
         self.sample_size_1 = args.sample_size_1
         self.sample_size_2 = args.sample_size_2
 
         self.val_dataset = val_dataset
-        self.val_split = [self.sample_size_1, self.sample_size_2, 
-                          len(self.val_dataset) - self.sample_size_1- self.sample_size_2]
+        self.val_split = [self.sample_size_1, self.sample_size_2, self.n_tests,
+                          len(self.val_dataset) - self.sample_size_1- self.sample_size_2 - self.n_tests]
 
         self.gamma, self.scores, self.X_1_feats = None, None, None
         self.p_value_outputs = {}
         self.m_in = {}
         self.m_out = {}
+        
         self.m_value_outputs = None
 
     def on_test_start(self):
@@ -42,22 +45,41 @@ class CADet(pl.LightningModule):
             calib_data = np.load('CADet_Calib/CADet_Calib.npy', allow_pickle=True)
             self.X_1_feats = torch.tensor(calib_data.item()['features'], device=self.device)
             self.scores = torch.tensor(calib_data.item()['scores'], device=self.device)
-            self.gamma = calib_data.item()['gamma'].item()
+            self.gamma = calib_data.item()['gamma']
+            self.same_dist_indices =  calib_data.item()['same_dist']
         else:
             print("No calibration file found, do calibration...")
-            val_dataset_1, val_dataset_2, _ = random_split(self.val_dataset, self.val_split)
-            self.calibrate(val_dataset_1, val_dataset_2)
-            
+            val_dataset_1, val_dataset_2, same_dist_dataset, _ = random_split(self.val_dataset, self.val_split)
+            self.same_dist_indices = np.array(same_dist_dataset.indices)
+            calibrated_data = self.calibrate(val_dataset_1, val_dataset_2)
+            calibrated_data['same_dist'] = self.same_dist_indices
+            # os.makedirs('CADet_Calib', exist_ok=True)
+            # np.save(os.path.join('CADet_Calib', 'CADet_Calib.npy'), calibrated_data)
+                       
         for key in self.test_image_sets: 
             self.p_value_outputs[key] = pd.DataFrame(columns=['test_step', 'p_value'])
             self.m_in[key] = torch.zeros(self.n_tests)
             self.m_out[key] = torch.zeros(self.n_tests)
-        self.m_value_outputs = pd.DataFrame(columns=['m_in_mean', 'm_in_var', 'm_out_mean', 'm_out_var'], 
+        self.m_value_outputs = pd.DataFrame(columns=['m_in_mean', 'm_out_mean', 'gamma_m_out', 'm_in_var', 'm_out_var'], 
                                             index=self.test_image_sets)
+        
+        # calculate in-distribution m values
+        same_dist_dataset = Subset(self.val_dataset, self.same_dist_indices)
+        same_dist_data_loader = DataLoader(dataset=same_dist_dataset, batch_size=1)
+        for batch_idx, (X, _) in enumerate(same_dist_data_loader):
+            X = X[0].to(self.device)
+            X_test_feat = self.backbone(X)
+            m_in, m_out = self.compute(X_test_feat)
+            test_score = m_in + m_out * self.gamma 
+            p_value = (torch.sum(test_score > self.scores).item() + 1) / (len(self.scores) + 1) 
+            self.p_value_outputs['same_dist'].loc[batch_idx] = [batch_idx, p_value]
+            self.m_in['same_dist'][batch_idx] = m_in
+            self.m_out['same_dist'][batch_idx] = m_out
 
     def test_step(self, batch, batch_idx):
-        for key in self.test_image_sets:
-            X_test = batch[key]
+        for key in self.test_image_sets[1:]:
+            X_test, _ = batch[key]
+            X_test = X_test[0]
 
             # import matplotlib.pyplot as plt
             # fig, axes = plt.subplots(1, len(X_test), figsize=(len(X_test), 2))
@@ -70,7 +92,7 @@ class CADet(pl.LightningModule):
             
             X_test_feat = self.backbone(X_test)
             m_in, m_out = self.compute(X_test_feat)
-            test_score = m_in + self.gamma * m_out
+            test_score = m_in + m_out * self.gamma 
             p_value = (torch.sum(test_score > self.scores).item() + 1) / (len(self.scores) + 1) 
             self.p_value_outputs[key].loc[batch_idx] = [batch_idx, p_value]
             self.m_in[key][batch_idx] = m_in
@@ -81,67 +103,68 @@ class CADet(pl.LightningModule):
             for k, v in self.p_value_outputs.items():
                 v.to_excel(writer, sheet_name=k, index=False)
         aurocs = self.save_roc_curve()
+        pd.DataFrame.from_dict(self.m_in).to_csv(os.path.join(self.logger.log_dir, 'cadet_m_in_raw.csv'))
+        pd.DataFrame.from_dict(self.m_out).to_csv(os.path.join(self.logger.log_dir, 'cadet_m_out_raw.csv'))
         pd.DataFrame.from_dict(aurocs, orient='index').to_csv(os.path.join(self.logger.log_dir, 'cadet_aurocs.csv'), header=False)
         for key in self.test_image_sets:
-             self.m_value_outputs.loc[key] = [torch.mean(self.m_in[key]).item(), torch.var(self.m_in[key]).item(), 
-                                              torch.mean(self.m_out[key]).item(), torch.var(self.m_out[key]).item()]             
+            m_in = torch.mean(self.m_in[key]).item()
+            m_out = torch.mean(self.m_out[key]).item()
+            gamma_m_out = self.gamma * m_out
+            m_in_var = torch.var(self.m_in[key]).item()
+            m_out_var = torch.var(self.m_out[key]).item()           
+            self.m_value_outputs.loc[key] = [m_in, m_out, gamma_m_out, m_in_var, m_out_var]             
         pd.DataFrame.from_dict(self.m_value_outputs).to_csv(os.path.join(self.logger.log_dir, 'cadet_m_values.csv'), header=True)     
         self.gamma, self.scores, self.X_1_feats = None, None, None
         self.p_value_outputs.clear()
         self.m_value_outputs = None
     
     def _cal_similarity(self, input0, input1):
-        # inputs01 = torch.cat((input0, input1), 0)
-        # dist = torch.cdist(inputs01, inputs01)
-        # sigma = 1 / ((dist ** 2).median())
-        # kernels =  torch.exp(- sigma * torch.cdist(input0,input1) ** 2)
+        return torch.exp(-torch.cdist(input0, input1))
+        # n1 = input0.shape[0]   
+        # kernels = GuassianKernel()(input0, input1)[:n1, n1:]
         # return kernels
-        out0 = F.normalize(input0, dim=1)
-        out1 = F.normalize(input1, dim=1)
-        return out0 @ out1.t()
+        # out0 = F.normalize(input0, dim=1)
+        # out1 = F.normalize(input1, dim=1)
+        # return out0 @ out1.t()
     
     def calibrate(self, dataset_1, dataset_2):
-        dataloader_1 = DataLoader(dataset_1, batch_size=1, shuffle=False, collate_fn=ImageNetDataModule.cadet_collate_fn)
-        dataloader_2 = DataLoader(dataset_2, batch_size=1, shuffle=False, collate_fn=ImageNetDataModule.cadet_collate_fn) 
+        dataloader_1 = DataLoader(dataset_1, batch_size=1, shuffle=False)
+        dataloader_2 = DataLoader(dataset_2, batch_size=1, shuffle=False) 
         X_1_feats = []
         m_ins = []   
         m_outs = []
 
-        for _, X_1 in enumerate(tqdm(dataloader_1, desc="Compute X_VAL_1 features")):
-            X_1 = X_1.to(self.device)
+        for _, (X_1,_) in enumerate(tqdm(dataloader_1, desc="Compute X_VAL_1 features")):
+            X_1 = X_1[0].to(self.device)
             X_1_feat = self.backbone(X_1)
             X_1_feats.append(X_1_feat)
         self.X_1_feats = torch.stack(X_1_feats)
         
-        for _, X_2 in enumerate(tqdm(dataloader_2, desc="Calibrate with X_VAL_2")):
-            X_2 = X_2.to(self.device)
+        for _, (X_2,_) in enumerate(tqdm(dataloader_2, desc="Calibrate with X_VAL_2")):
+            X_2 = X_2[0].to(self.device)
             X_2_feat = self.backbone(X_2)
-            intra_sim = self._cal_similarity(X_2_feat, X_2_feat)
-            m_in = intra_sim.sum() - intra_sim.trace()
-            m_ins.append(m_in.item())
-            outer_sims = torch.vmap(lambda arg: self._cal_similarity(X_2_feat, arg))(self.X_1_feats)
-            m_out = outer_sims.sum() 
-            m_outs.append(m_out.item())
-
-        # m_ins = torch.tensor(m_ins) / (self.n_transforms * (self.n_transforms + 1))
-        m_ins = torch.tensor(m_ins, device=self.device) / (self.n_transforms * (self.n_transforms - 1))
-        m_outs = torch.tensor(m_outs, device=self.device) / (self.n_transforms * self.n_transforms * self.sample_size_1)
-        self.gamma = torch.sqrt(m_ins.var() / m_outs.var())
+            m_in, m_out = self.compute(X_2_feat)
+            m_ins.append(m_in)
+            m_outs.append(m_out)
+            
+        m_ins = torch.tensor(m_ins, device=self.device)
+        m_outs = torch.tensor(m_outs, device=self.device)
+        self.gamma = torch.sqrt(m_ins.var() / m_outs.var()).item()
+        print(f'Calibrated m_in mean: ', m_ins.mean().item())
+        print(f'Calibrated m_out mean: ', m_outs.mean().item())
         print(f'Calibrated gamma: {self.gamma}')
-        self.scores = m_ins + self.gamma * m_outs
-        
+        self.scores = m_ins + m_outs * self.gamma        
         calibrated_data = {
             'features': self.X_1_feats.cpu().numpy(),
             'scores': self.scores.cpu().numpy(),
-            'gamma': self.gamma.cpu().numpy(),
+            'gamma': self.gamma
         }
-        os.makedirs('CADet_Calib', exist_ok=True)
-        np.save(os.path.join('CADet_Calib', 'CADet_Calib.npy'), calibrated_data)
+        
+        return calibrated_data
     
     def compute(self, X_test_feat):
         intra_sim = self._cal_similarity(X_test_feat, X_test_feat)
-        # m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms + 1)) 
-        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms -1 )) 
+        m_in = (intra_sim.sum() - intra_sim.trace())  / (self.n_transforms * (self.n_transforms -1 ))     
         outer_sims = torch.vmap(lambda arg: self._cal_similarity(X_test_feat, arg))(self.X_1_feats)
         m_out = outer_sims.sum() / (self.n_transforms * self.n_transforms * self.sample_size_1)
         return m_in, m_out

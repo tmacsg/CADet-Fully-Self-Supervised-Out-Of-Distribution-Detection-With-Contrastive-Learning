@@ -149,8 +149,8 @@ def prepare_cifar10_attack():
     model.eval()
     attackers = {
         'FGSM': torchattacks.FGSM(model, eps=0.05),
-        'PGD': torchattacks.PGD(model, epsa=0.02, alpha=0.002, steps=50, random_start=True),
-        'CW': torchattacks.CW(model, c=0.1, kapp=50, lr=0.03)
+        'PGD': torchattacks.PGD(model, eps=0.02, alpha=0.002, steps=50, random_start=True),
+        'CW': torchattacks.CW(model, c=0.1, kappa=50, steps=50, lr=0.03)
     }
     for attack_type in ['FGSM', 'PGD', 'CW']:
         data_attacker = DatasetAttacker_CIFAR10(image_path=image_path, 

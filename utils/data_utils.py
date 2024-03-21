@@ -21,21 +21,20 @@ import random
 class CADetTransform:
     def __init__(
         self,
-        num_tranforms: int = 50,
-        input_size: int = 224,
-        hf_prob: float = 0.5
+        num_tranforms: int
     ):
-        # view_transform = T.Compose([
-        #     T.RandomResizedCrop(size=input_size, scale=(0.75, 0.75)),
-        #     # T.RandomHorizontalFlip(p=hf_prob),
-        #     T.ToTensor(),
-        #     T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])
-        # ])
-        view_transform = SimCLRViewTransform()
-        self.transforms = [view_transform for _ in range(num_tranforms)]
+        self.n_transforms = num_tranforms
+        self.view_transform = T.Compose([
+            Convert('RGB'),
+            T.Resize([256,256], interpolation=T.InterpolationMode.BILINEAR),
+            T.RandomResizedCrop(size=224, scale=(0.75, 0.75)),
+            T.RandomHorizontalFlip(),
+            T.ToTensor(),
+            T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])
+        ])
 
     def __call__(self, image):
-         return [transform(image) for transform in self.transforms]
+        return torch.stack([self.view_transform(image) for _ in range(self.n_transforms)])
     
 class CADetTransform_CIFAR:
     def __init__(
@@ -54,7 +53,7 @@ class CADetTransform_CIFAR:
 
     def __call__(self, image):
          return [transform(image) for transform in self.transforms]
-    
+         
 class PixelFlick:
     def __init__(self, scale):
         self.scale = scale
@@ -64,6 +63,13 @@ class PixelFlick:
         noise = torch.randint(-self.scale, self.scale, image.shape)
         image =  np.clip(image + noise.numpy(), 0, 255).astype(np.uint8)
         return Image.fromarray(image)
+    
+class Convert:
+    def __init__(self, mode='RGB'):
+        self.mode = mode
+
+    def __call__(self, image):
+        return image.convert(self.mode)
 
 class CIFAR10_NPY(Dataset):
     """ load cifar dataset from .npy format
@@ -282,7 +288,7 @@ class ImageNetDataModule(pl.LightningDataModule):
         self.mmd_sample_sizes = args.mmd_sample_sizes
         self.mmd_n_tests = args.mmd_n_tests
         self.mmd_image_set_q = args.mmd_image_set_q
-        assert self.mmd_image_set_q in ['same_dist', 'imagenet_o', 'inaturalist', 'pgd', 'cw', 'fgsm']
+        assert self.mmd_image_set_q in ['same_dist', 'inaturalist', 'imagenet_o', 'pgd', 'cw', 'fgsm']
 
         self.cadet_n_tests = args.cadet_n_tests
         self.cadet_n_transforms = args.cadet_n_transforms
@@ -352,14 +358,11 @@ class ImageNetDataModule(pl.LightningDataModule):
                
         if self.mode == 'cadet':
             if stage == 'test':
-                transform = CADetTransform(num_tranforms=self.cadet_n_transforms)
-                # self.test_dataset_same_dist = ImageFolder(root=self.train_path, transform=transform)
-                self.test_dataset_same_dist = ImageFolder(root=self.val_path, transform=transform)
-                self.test_dataset_imagenet_o = ImageFolder(root=self.imagenet_o_path, transform=transform)
-                self.test_dataset_inaturalist = ImageFolder(root=self.inaturalist_path, transform=transform)
-                self.test_dataset_pgd = ImageFolder(root=self.pgd_path, transform=transform)
-                self.test_dataset_cw = ImageFolder(root=self.cw_path, transform=transform)
-                self.test_dataset_fgsm = ImageFolder(root=self.fgsm_path, transform=transform)
+                self.test_dataset_imagenet_o = ImageFolder(root=self.imagenet_o_path, transform=CADetTransform(num_tranforms=self.cadet_n_transforms))
+                self.test_dataset_inaturalist = ImageFolder(root=self.inaturalist_path, transform=CADetTransform(num_tranforms=self.cadet_n_transforms))
+                self.test_dataset_pgd = ImageFolder(root=self.pgd_path, transform=CADetTransform(num_tranforms=self.cadet_n_transforms))
+                self.test_dataset_cw = ImageFolder(root=self.cw_path, transform=CADetTransform(num_tranforms=self.cadet_n_transforms))
+                self.test_dataset_fgsm = ImageFolder(root=self.fgsm_path, transform=CADetTransform(num_tranforms=self.cadet_n_transforms))
  
     def train_dataloader(self): 
         return DataLoader(self.train_dataset, batch_size=self.bacth_size, num_workers=8,
@@ -380,8 +383,6 @@ class ImageNetDataModule(pl.LightningDataModule):
             sampler_test_s = RandomSampler(self.test_dataset_s, replacement=True, num_samples=3*num_samples)
             sampler_test_q = RandomSampler(self.test_dataset_q, replacement=True, num_samples=3*num_samples)
 
-
-
             dataloader_test_s= DataLoader(self.test_dataset_s, batch_size=batch_size*3, sampler=sampler_test_s,
                                     num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True)
             dataloader_test_q = DataLoader(self.test_dataset_q, batch_size=batch_size*3, sampler=sampler_test_q,
@@ -394,34 +395,28 @@ class ImageNetDataModule(pl.LightningDataModule):
             num_samples = batch_size * self.mmd_n_tests
             sampler_s = RandomSampler(self.dataset_s, replacement=True, num_samples=3*num_samples)
             sampler_q = RandomSampler(self.dataset_q, replacement=True, num_samples=self.mmd_n_tests)
-            dataloader_s = DataLoader(self.dataset_s, batch_size=batch_size*3, sampler=sampler_s, )
-                                    # num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True)
+            dataloader_s = DataLoader(self.dataset_s, batch_size=batch_size*3, sampler=sampler_s)
             dataloader_q = DataLoader(self.dataset_q, batch_size=1, sampler=sampler_q, collate_fn=self.mmd_ss_collate_fn)
-                                    # num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True)
             
             return CombinedLoader({'s': dataloader_s, 'q': dataloader_q})
         
         if self.mode == 'cadet':
-            sampler_test_same_dist = RandomSampler(self.test_dataset_same_dist, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_imagenet_o = RandomSampler(self.test_dataset_imagenet_o, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_inaturalist = RandomSampler(self.test_dataset_inaturalist, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_pgd = RandomSampler(self.test_dataset_pgd, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_cw = RandomSampler(self.test_dataset_cw, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_fgsm = RandomSampler(self.test_dataset_fgsm, replacement=False, num_samples=self.cadet_n_tests)
-            dataloader_test_same_dist = DataLoader(self.test_dataset_same_dist, batch_size=1, sampler=sampler_test_same_dist, collate_fn=self.cadet_collate_fn)
-            dataloader_test_imagenet_o = DataLoader(self.test_dataset_imagenet_o, batch_size=1, sampler=sampler_test_imagenet_o, collate_fn=self.cadet_collate_fn)
-            dataloader_test_inaturalist = DataLoader(self.test_dataset_inaturalist, batch_size=1, sampler=sampler_test_inaturalist, collate_fn=self.cadet_collate_fn)
-            dataloader_test_pgd = DataLoader(self.test_dataset_pgd, batch_size=1, sampler=sampler_test_pgd, collate_fn=self.cadet_collate_fn)
-            dataloader_test_cw = DataLoader(self.test_dataset_cw, batch_size=1, sampler=sampler_test_cw, collate_fn=self.cadet_collate_fn)
-            dataloader_test_fgsm = DataLoader(self.test_dataset_fgsm, batch_size=1, sampler=sampler_test_fgsm, collate_fn=self.cadet_collate_fn)
-            return CombinedLoader({'same_dist': dataloader_test_same_dist, 'imagenet_o': dataloader_test_imagenet_o, 'inaturalist': dataloader_test_inaturalist, 
-                                   'pgd': dataloader_test_pgd, 'cw': dataloader_test_cw, 'fgsm': dataloader_test_fgsm})
 
-    @staticmethod
-    def cadet_collate_fn(batch):
-        X, _ = batch[0]
-        return torch.stack(X)
-    
+            dataloader_test_imagenet_o = DataLoader(self.test_dataset_imagenet_o, batch_size=1, sampler=sampler_test_imagenet_o)
+            dataloader_test_inaturalist = DataLoader(self.test_dataset_inaturalist, batch_size=1, sampler=sampler_test_inaturalist)
+            dataloader_test_pgd = DataLoader(self.test_dataset_pgd, batch_size=1, sampler=sampler_test_pgd)
+            dataloader_test_cw = DataLoader(self.test_dataset_cw, batch_size=1, sampler=sampler_test_cw)
+            dataloader_test_fgsm = DataLoader(self.test_dataset_fgsm, batch_size=1, sampler=sampler_test_fgsm)
+            
+            return CombinedLoader({'imagenet_o': dataloader_test_imagenet_o, 'inaturalist': dataloader_test_inaturalist, 
+                                   'pgd': dataloader_test_pgd, 'cw': dataloader_test_cw, 'fgsm': dataloader_test_fgsm}, 'max_size_cycle')
+
+   
     @staticmethod
     def mmd_ss_collate_fn(batch):
         X, labels = batch[0]
