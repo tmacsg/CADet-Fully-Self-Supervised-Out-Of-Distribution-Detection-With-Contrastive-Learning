@@ -2,6 +2,8 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import torch.nn.functional as F
+from sklearn.metrics import roc_curve, auc
+import matplotlib.pyplot as plt
 
 class Kernel:
     def __call__(self, 
@@ -102,3 +104,27 @@ def mmd_permutation_test_cc(sample_p1: torch.Tensor,
 
     p_value = (torch.sum(mmd_vals >= est).item() + 1) / (n_permutations + 1)
     return p_value, mmd_vals, est
+ 
+
+def draw_roc_curve(normal_scores, anomaly_scores):
+    y_true = np.concatenate([np.zeros(len(normal_scores)), np.ones(len(anomaly_scores))])
+    y_score = np.concatenate([normal_scores, anomaly_scores])      
+    fpr, tpr, _ = roc_curve(y_true, y_score)
+    roc_auc = auc(fpr, tpr)
+    plt.figure()
+    lw = 2
+    plt.plot(fpr, tpr, color='darkorange', lw=lw, label='ROC curve (area = %0.2f)' % roc_auc)
+    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic (ROC) Curve')
+    plt.legend(loc="lower right")
+    plt.show()
+    
+def get_rejection_rate(normal_scores, anomaly_scores, alpha=0.05):
+    normal_scores = torch.tensor(normal_scores)
+    anomaly_scores = torch.tensor(anomaly_scores)
+    thresh = torch.quantile(normal_scores, 1-alpha)
+    return torch.sum(anomaly_scores > thresh) / len(anomaly_scores)

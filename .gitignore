@@ -15,10 +15,13 @@ develop-eggs/
 dist/
 downloads/
 CADet_Calib/
+Features/
 image_data/
 imagenet_ckpts/
 cifar_ckpts/
+mnist_ckpts/
 cifar_log/
+mnist_log/
 lightning_logs/
 imagenet_log/
 eggs/

@@ -4,8 +4,8 @@ from torch import Tensor
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS
 from pytorch_lightning.utilities.combined_loader import CombinedLoader
-from torch.utils.data import DataLoader, Dataset, RandomSampler, BatchSampler
-from torchvision.datasets import CIFAR10, ImageFolder
+from torch.utils.data import DataLoader, Dataset, RandomSampler, BatchSampler, Subset
+from torchvision.datasets import CIFAR10, ImageFolder, MNIST
 from lightly.data import LightlyDataset
 from lightly.transforms.utils import IMAGENET_NORMALIZE
 from lightly.transforms.gaussian_blur import GaussianBlur
@@ -17,6 +17,7 @@ import torch
 import re
 from tqdm import tqdm
 import random
+import pickle
 
 class CADetTransform:
     def __init__(
@@ -39,20 +40,21 @@ class CADetTransform:
 class CADetTransform_CIFAR:
     def __init__(
         self,
-        num_tranforms: int = 50,
-        hf_prob: float = 0.5
+        num_tranforms: int,
     ):
-        # view_transform = T.Compose([
-        #     T.RandomResizedCrop(size=32, scale=(0.75, 0.75)),
-        #     T.RandomHorizontalFlip(p=hf_prob),
-        #     T.ToTensor(),
-        #     T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])
-        # ])
-        view_transform = SimCLRViewTransform(input_size=32, min_scale=0.75, cj_prob=0)
-        self.transforms = [view_transform for _ in range(num_tranforms)]
+        self.view_transform = T.Compose([
+            Convert('RGB'),
+            T.Resize([32,32], interpolation=T.InterpolationMode.BILINEAR),
+            T.RandomResizedCrop(size=32, scale=(0.75, 0.75)),
+            # T.RandomHorizontalFlip(),
+            T.ToTensor(),
+            T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])
+        ])
+        self.n_transforms = num_tranforms
+        # self.view_transform = SimCLRViewTransform(input_size=32, min_scale=0.75, cj_prob=0)
 
     def __call__(self, image):
-         return [transform(image) for transform in self.transforms]
+         return torch.stack([self.view_transform(image) for _ in range(self.n_transforms)])
          
 class PixelFlick:
     def __init__(self, scale):
@@ -76,24 +78,21 @@ class CIFAR10_NPY(Dataset):
     """
     def __init__(self, root, transform=None):
         self.transform = transform
-        self.data = np.load(root, allow_pickle=True)
+        _data = np.load(root, allow_pickle=True)
+        if _data.dtype != 'uint8':
+            # dict
+            self.data = _data.item()['data']
+            self.targets = _data.item()['labels']
+        else:
+            self.data = _data
+            self.targets = np.full((len(self.data),), 10)
 
     def __len__(self):
-        if self.data.dtype != 'uint8':
-            # dict
-            return len(self.data.item()['data'])
-        else:
-            return len(self.data)
+        return len(self.data)
 
     def __getitem__(self, index):
-        if self.data.dtype != 'uint8':
-            # dict
-            sample = self.data.item()['data'][index]
-            label = self.data.item()['labels'][index]
-        else:
-            sample = self.data[index]
-            label = 10 
-
+        sample = self.data[index]
+        label = self.targets[index]
         sample = T.ToPILImage()(sample)     
         if self.transform is not None:
             sample = self.transform(sample)
@@ -142,7 +141,6 @@ class CIFARDataModule(pl.LightningDataModule):
                 # self.val_dataset = CIFAR10_NPY(root=self.cifar10_pgd_path, transform=self.test_transform)
                 # self.val_dataset = CIFAR10(root=self.cifar10_path, train=True, download=True, transform=T.ToTensor())
 
-
         if self.mode == 'unsupervised':
             if stage == 'fit':
                 train_dataset = CIFAR10(root=self.cifar10_path, train=True, download=True,
@@ -169,8 +167,7 @@ class CIFARDataModule(pl.LightningDataModule):
         if self.mode == 'mmd_ss':
             if stage == 'test':
                 test_transform_s = CADetTransform_CIFAR(num_tranforms=max(self.mmd_sample_sizes))
-                test_transform_q = CADetTransform_CIFAR(num_tranforms=max(self.mmd_sample_sizes))                                                                                             
-                # self.dataset_s = CIFAR10(root=self.cifar10_path, train=False, download=True, transform=self.test_transform)
+                test_transform_q = CADetTransform_CIFAR(num_tranforms=max(self.mmd_sample_sizes))                         
                 self.dataset_s = CIFAR10(root=self.cifar10_path, train=False, download=True, transform=test_transform_s)
                 if self.mmd_image_set_q == 'same_dist':
                     self.dataset_q = CIFAR10(root=self.cifar10_path, train=False, download=True, transform=test_transform_q) 
@@ -186,7 +183,6 @@ class CIFARDataModule(pl.LightningDataModule):
         if self.mode == 'cadet':
             if stage == 'test':
                 transform = CADetTransform_CIFAR(num_tranforms=self.cadet_n_transforms)
-                self.test_dataset_same_dist = CIFAR10(root=self.cifar10_path, train=False, download=True, transform=transform) 
                 self.test_dataset_cifar10_1 = CIFAR10_NPY(root=self.cifar10_1_path, transform=transform)
                 # self.test_dataset_cifar10_1 = ImageFolder('//wsl.localhost/Ubuntu/home/bingbing/codes/OpenOOD/data/images_classic/cifar100/test',  transform=transform)
                 self.test_dataset_pgd = CIFAR10_NPY(root=self.cifar10_pgd_path, transform=transform)
@@ -211,8 +207,8 @@ class CIFARDataModule(pl.LightningDataModule):
         if self.mode == 'mmd':
             batch_size = max(self.mmd_sample_sizes)
             num_samples = batch_size * self.mmd_n_tests
-            sampler_s = RandomSampler(self.dataset_s, replacement=True, num_samples=3*num_samples)
-            sampler_q = RandomSampler(self.dataset_q, replacement=True, num_samples=num_samples)
+            sampler_s = RandomSampler(self.dataset_s, replacement=False, num_samples=3*num_samples)
+            sampler_q = RandomSampler(self.dataset_q, replacement=False, num_samples=num_samples)
             dataloader_s = DataLoader(self.dataset_s, batch_size=batch_size*3, sampler=sampler_s)
             dataloader_q = DataLoader(self.dataset_q, batch_size=batch_size, sampler=sampler_q)
             
@@ -242,25 +238,19 @@ class CIFARDataModule(pl.LightningDataModule):
             return CombinedLoader({'s': dataloader_s, 'q': dataloader_q})
         
         if self.mode == 'cadet':
-            sampler_test_same_dist = RandomSampler(self.test_dataset_same_dist, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_cifar10_1 = RandomSampler(self.test_dataset_cifar10_1, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_pgd = RandomSampler(self.test_dataset_pgd, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_cw = RandomSampler(self.test_dataset_cw, replacement=False, num_samples=self.cadet_n_tests)
             sampler_test_fgsm = RandomSampler(self.test_dataset_fgsm, replacement=False, num_samples=self.cadet_n_tests)
             
-            dataloader_test_same_dist = DataLoader(self.test_dataset_same_dist, batch_size=1, sampler=sampler_test_same_dist, collate_fn=self.cadet_collate_fn)
-            dataloader_test_cifar10_1 = DataLoader(self.test_dataset_cifar10_1, batch_size=1, sampler=sampler_test_cifar10_1, collate_fn=self.cadet_collate_fn)
-            dataloader_test_pgd = DataLoader(self.test_dataset_pgd, batch_size=1, sampler=sampler_test_pgd, collate_fn=self.cadet_collate_fn)
-            dataloader_test_cw = DataLoader(self.test_dataset_cw, batch_size=1, sampler=sampler_test_cw, collate_fn=self.cadet_collate_fn)
-            dataloader_test_fgsm = DataLoader(self.test_dataset_fgsm, batch_size=1, sampler=sampler_test_fgsm, collate_fn=self.cadet_collate_fn)
+            dataloader_test_cifar10_1 = DataLoader(self.test_dataset_cifar10_1, batch_size=1, sampler=sampler_test_cifar10_1)
+            dataloader_test_pgd = DataLoader(self.test_dataset_pgd, batch_size=1, sampler=sampler_test_pgd)
+            dataloader_test_cw = DataLoader(self.test_dataset_cw, batch_size=1, sampler=sampler_test_cw)
+            dataloader_test_fgsm = DataLoader(self.test_dataset_fgsm, batch_size=1, sampler=sampler_test_fgsm)
             
-            return CombinedLoader({'same_dist': dataloader_test_same_dist,  'cifar10_1': dataloader_test_cifar10_1,
-                                   'pgd': dataloader_test_pgd, 'cw': dataloader_test_cw, 'fgsm': dataloader_test_fgsm})
+            return CombinedLoader({'cifar10_1': dataloader_test_cifar10_1, 'pgd': dataloader_test_pgd, 
+                                   'cw': dataloader_test_cw, 'fgsm': dataloader_test_fgsm})
 
-    @staticmethod
-    def cadet_collate_fn(batch):
-        X, _ = batch[0]
-        return torch.stack(X)
     
     @staticmethod
     def mmd_ss_collate_fn(batch):
@@ -560,5 +550,109 @@ class DatasetAttacker_CIFAR10:
                             
     def _to_pil_image(self, x):
         return T.ToPILImage()(x)
+     
+class Cifar10_ByClass:
+    def __init__(self, dataset):
+        self.dataset = dataset
+        self.class_idxes = list(range(10))
+        
+    def get_dataset_by_class_id(self, class_id):
+        # idx = np.array(self.dataset.targets) == class_id
+        idx = np.where(np.array(self.dataset.targets) == class_id)[0]
+        return Subset(self.dataset, idx)
     
+class MNIST_FAKE(Dataset):
+    """ load mnist dataset from .pkl format
+    """
+    def __init__(self, root, transform=None):
+        self.transform = transform
+        _data = pickle.load(open(root, 'rb'))[0]        
+        self.data = _data
+        self.targets = np.full((len(self.data),), 10)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        label = self.targets[index]
+        sample = T.ToPILImage()(torch.tensor(sample)) 
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, label  
+
+class ContrastiveTransform:
+    def __init__(self, view_transform, n_trans = 2):
+        self.view_tranform = view_transform
+        self.n_trans = n_trans
+
+    def __call__(self, x):
+        return [self.view_tranform(x) for _ in range(self.n_trans)]
+
+class MNISTDataModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mnist_path = args.mnist_path
+        self.mnist_path_fake = args.mnist_path_fake
+ 
+        self.mode = args.mode
+        self.num_classes = args.num_classes
+        self.batch_size = args.batch_size
+        assert self.mode in ['supervised', 'unsupervised', 'mmd']
+        self.mmd_sample_sizes = args.mmd_sample_sizes
+        self.mmd_n_tests = args.mmd_n_tests
+        self.mmd_image_set_q = args.mmd_image_set_q
+        assert self.mmd_image_set_q in ['same_dist', 'mnist_fake']
+
+        self.view_transform = T.Compose([Convert('RGB'), SimCLRViewTransform(input_size=32, cj_prob=0)])
+        self.contrastive_transform = ContrastiveTransform(self.view_transform)
+        self.test_transform = T.Compose([Convert('RGB'), T.ToTensor(), T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])])
+
+    def prepare_data(self):
+        MNIST(root=self.mnist_path, train=True, download=True)
+        MNIST(root=self.mnist_path, train=False, download=True)
+        
+    def setup(self, stage: str):
+        if self.mode == 'supervised':
+            if stage == 'fit':
+                self.train_dataset = MNIST(root=self.mnist_path, train=True, download=True, transform=self.view_transform) 
+                self.val_dataset = MNIST(root=self.mnist_path, train=False, download=True, transform=self.test_transform)
+            if stage == 'test' or stage == 'validate': 
+                self.val_dataset = MNIST(root=self.mnist_path, train=False, download=True, transform=self.view_transform)
+        if self.mode == 'unsupervised':
+            if stage == 'fit':
+                train_dataset = MNIST(root=self.mnist_path, train=True, download=True, transform=self.contrastive_transform)
+                val_dataset = MNIST(root=self.mnist_path, train=False, download=True, transform=self.contrastive_transform)
+                self.train_dataset = LightlyDataset.from_torch_dataset(train_dataset)
+                self.val_dataset = LightlyDataset.from_torch_dataset(val_dataset)
+
+        if self.mode == 'mmd':
+            if stage == 'test':
+                self.dataset_s = MNIST(root=self.mnist_path, train=False, download=True, transform=self.test_transform)
+                if self.mmd_image_set_q == 'same_dist':
+                    self.dataset_q = MNIST(root=self.mnist_path, train=True, download=True, transform=self.test_transform) 
+                elif self.mmd_image_set_q == 'mnist_fake':
+                    self.dataset_q = MNIST_FAKE(root=self.mnist_path_fake, transform=self.test_transform) 
+                    
+    def train_dataloader(self): 
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, 
+                          num_workers=8, pin_memory=True, drop_last=True, shuffle=True, persistent_workers=True) 
     
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, 
+                          num_workers=8, pin_memory=True, drop_last=True, shuffle=False, persistent_workers=True) 
+        
+    def test_dataloader(self):
+        if self.mode == 'supervised':
+            return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=8, 
+                            pin_memory=True, drop_last=True, shuffle=False, persistent_workers=True) 
+        
+        if self.mode == 'mmd':
+            batch_size = max(self.mmd_sample_sizes)
+            num_samples = batch_size * self.mmd_n_tests
+            sampler_s = RandomSampler(self.dataset_s, replacement=False, num_samples=3*num_samples)
+            sampler_q = RandomSampler(self.dataset_q, replacement=False, num_samples=num_samples)
+            dataloader_s = DataLoader(self.dataset_s, batch_size=batch_size*3, sampler=sampler_s)
+            dataloader_q = DataLoader(self.dataset_q, batch_size=batch_size, sampler=sampler_q)           
+            return CombinedLoader({'s': dataloader_s, 'q': dataloader_q})
+        

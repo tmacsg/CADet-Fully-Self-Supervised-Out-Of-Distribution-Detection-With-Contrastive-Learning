@@ -41,7 +41,7 @@ mmd:
   args:
     n_tests: 100
     n_perms: 500
-    sample_sizes: [3, 5, 10, 20]
+    sample_sizes: [5, 25, 50, 100, 150]
     sig_level: 0.05
     kernel: cosine
     clean_calib: True
@@ -49,8 +49,8 @@ mmd:
 
 cadet:
   _target_: models.cadet.CADet
-  base_model: ${classifier}
-  # base_model: ${simclr}
+  # base_model: ${classifier}
+  base_model: ${simclr}
   val_dataset: ${cadet_val_dataset}
   args:
     test_image_sets: ['same_dist', 'inaturalist', 'imagenet_o', 'pgd', 'cw', 'fgsm']
@@ -59,7 +59,7 @@ cadet:
     sample_size_1: 300
     sample_size_2: 2000
     # n_tests: 10
-    # n_transforms: 50
+    # n_transforms: 5
     # sample_size_1: 20
     # sample_size_2: 20
 

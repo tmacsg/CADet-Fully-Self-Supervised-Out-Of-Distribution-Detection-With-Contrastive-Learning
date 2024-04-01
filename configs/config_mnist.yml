@@ -1,0 +1,57 @@
+exp_name: mnist
+
+classifier:
+  _target_: models.classifier.Classifier
+  backbone:
+    _target_: models.resnet.ResNet50 
+    cifar_head: True
+  args:  
+    mode: train
+    num_classes: 10
+    lr: 0.15
+    momentum: 0.9
+    weight_decay: 1e-4
+    max_epochs: 200
+    ckpt_path: mnist_ckpts/mnist_cls_epoch=163_val_acc_cls=0.9750.ckpt
+
+simclr:
+  _target_: models.simclr.SimCLR
+  backbone:
+    _target_: models.resnet.ResNet50 
+    cifar_head: True
+  args:  
+    num_layers: 3
+    mode: train 
+    num_classes: 10
+    lr: 0.15
+    momentum: 0.9
+    weight_decay: 1e-4
+    max_epochs: 800
+    ckpt_path: mnist_ckpts/mnist_simclr_epoch=776_train_loss_ssl=0.6514.ckpt
+
+mmd:
+  _target_: models.mmd.MMD
+  # base_model: ${classifier}
+  base_model: ${simclr}
+  args:
+    n_tests: 100
+    n_perms: 500
+    # sample_sizes: [3, 10, 20, 50, 100, 200, 500]#, 1000]
+    sample_sizes: [3, 5, 10, 20, 50]
+    sig_level: 0.05
+    kernel: cosine
+    clean_calib: True
+    image_set_q: same_dist
+
+mnist_data_module:
+  _target_: utils.data_utils.MNISTDataModule
+  args:
+    mnist_path: image_data/MNIST
+    mnist_path_fake: image_data/MNIST/Fake_MNIST_data_EP100_N10000.pckl
+    mode: unsupervised
+    num_classes: 10
+    batch_size: 256
+    mmd_sample_sizes: ${mmd.args.sample_sizes}
+    mmd_n_tests: ${mmd.args.n_tests}
+    mmd_image_set_q: ${mmd.args.image_set_q}
+

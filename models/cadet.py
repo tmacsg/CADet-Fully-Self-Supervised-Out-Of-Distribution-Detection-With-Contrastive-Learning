@@ -36,8 +36,10 @@ class CADet(pl.LightningModule):
         self.p_value_outputs = {}
         self.m_in = {}
         self.m_out = {}
+        self.test_scores = {}
         
         self.m_value_outputs = None
+        
 
     def on_test_start(self):
         if os.path.exists('CADet_Calib/CADet_Calib.npy'):
@@ -60,6 +62,7 @@ class CADet(pl.LightningModule):
             self.p_value_outputs[key] = pd.DataFrame(columns=['test_step', 'p_value'])
             self.m_in[key] = torch.zeros(self.n_tests)
             self.m_out[key] = torch.zeros(self.n_tests)
+            self.test_scores[key] = torch.zeros(self.n_tests)
         self.m_value_outputs = pd.DataFrame(columns=['m_in_mean', 'm_out_mean', 'gamma_m_out', 'm_in_var', 'm_out_var'], 
                                             index=self.test_image_sets)
         
@@ -75,6 +78,7 @@ class CADet(pl.LightningModule):
             self.p_value_outputs['same_dist'].loc[batch_idx] = [batch_idx, p_value]
             self.m_in['same_dist'][batch_idx] = m_in
             self.m_out['same_dist'][batch_idx] = m_out
+            self.test_scores['same_dist'][batch_idx] = test_score
 
     def test_step(self, batch, batch_idx):
         for key in self.test_image_sets[1:]:
@@ -97,6 +101,7 @@ class CADet(pl.LightningModule):
             self.p_value_outputs[key].loc[batch_idx] = [batch_idx, p_value]
             self.m_in[key][batch_idx] = m_in
             self.m_out[key][batch_idx] = m_out
+            self.test_scores[key][batch_idx] = test_score
 
     def on_test_end(self):
         with pd.ExcelWriter(os.path.join(self.logger.log_dir, 'cadet_p_values.xlsx')) as writer:
@@ -105,6 +110,7 @@ class CADet(pl.LightningModule):
         aurocs = self.save_roc_curve()
         pd.DataFrame.from_dict(self.m_in).to_csv(os.path.join(self.logger.log_dir, 'cadet_m_in_raw.csv'))
         pd.DataFrame.from_dict(self.m_out).to_csv(os.path.join(self.logger.log_dir, 'cadet_m_out_raw.csv'))
+        pd.DataFrame.from_dict(self.test_scores).to_csv(os.path.join(self.logger.log_dir, 'cadet_test_scores_raw.csv'))
         pd.DataFrame.from_dict(aurocs, orient='index').to_csv(os.path.join(self.logger.log_dir, 'cadet_aurocs.csv'), header=False)
         for key in self.test_image_sets:
             m_in = torch.mean(self.m_in[key]).item()
@@ -119,13 +125,14 @@ class CADet(pl.LightningModule):
         self.m_value_outputs = None
     
     def _cal_similarity(self, input0, input1):
-        return torch.exp(-torch.cdist(input0, input1))
+        # return torch.exp(-torch.cdist(input0, input1, p=1))
         # n1 = input0.shape[0]   
         # kernels = GuassianKernel()(input0, input1)[:n1, n1:]
         # return kernels
-        # out0 = F.normalize(input0, dim=1)
-        # out1 = F.normalize(input1, dim=1)
-        # return out0 @ out1.t()
+        out0 = F.normalize(input0, dim=1)
+        out1 = F.normalize(input1, dim=1)
+        return out0 @ out1.t()
+        # return input0 @ input1.t() 
     
     def calibrate(self, dataset_1, dataset_2):
         dataloader_1 = DataLoader(dataset_1, batch_size=1, shuffle=False)

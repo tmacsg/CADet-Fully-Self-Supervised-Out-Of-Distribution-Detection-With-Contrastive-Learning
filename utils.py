@@ -24,7 +24,10 @@ import random
 from lightly.transforms.utils import IMAGENET_NORMALIZE
 from sklearn.manifold import TSNE
 import plotly.express as px
+from plotly.validators.scatter.marker import SymbolValidator
 from sklearn.decomposition import PCA
+import random
+import plotly.graph_objects as go
 
 def prepare_imagenet_val_set():
     """ Copy images from imagenet val folder to another folder with class names as the subfolder name
@@ -252,22 +255,34 @@ def extract_classifier():
     weight_path = 'downloads/r50_1x_sk0_supervised'
     extract_classifier_weights(model, weight_path, model_save_path)
     
-def plot_tsne_cifar():
+def plot_tsne_cifar(n_components=2):
+    raw_symbols = SymbolValidator().values
+    namestems = []
+    namevariants = []
+    symbols = []
+    for i in range(0,len(raw_symbols),3):
+        name = raw_symbols[i+2]
+        symbols.append(raw_symbols[i])
+        namestems.append(name.replace("-open", "").replace("-dot", ""))
+        namevariants.append(name[len(namestems[-1]):])
+        
+    
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     cfg = OmegaConf.load("configs/config_cifar.yml")
-    tsne = TSNE(n_components=2,  perplexity=30, n_iter=5000)
-    # pca = PCA(n_components=2)
+    tsne = TSNE(n_components,  perplexity=30, n_iter=5000)
+    pca = PCA(n_components)
     model = instantiate(cfg.classifier)
     # model = instantiate(cfg.simclr)
     model._load_weights()
     backbone = model.backbone
+    # backbone = model
     backbone.to(device)
     backbone.eval()
     
     dataset = CIFAR10(cfg.cifar_data_module.args.cifar10_path, train=True, download=False,
                       transform=T.Compose([T.ToTensor(), T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])]))
-    # dataset = CIFAR10_NPY(cfg.cifar_data_module.args.cifar10_pgd_path,
-                    #   transform=T.Compose([T.ToTensor(), T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])]))
+    # dataset = CIFAR10_NPY(cfg.cifar_data_module.args.cifar10_cw_path,
+    #                   transform=T.Compose([T.ToTensor(), T.Normalize(mean=IMAGENET_NORMALIZE['mean'], std=IMAGENET_NORMALIZE['std'])]))
     sampler = RandomSampler(dataset, replacement=True, num_samples=2000)
     dataloader = DataLoader(dataset, batch_size=256, sampler=sampler, drop_last=False)   
     Feats = []
@@ -282,8 +297,23 @@ def plot_tsne_cifar():
     X_tsnes = tsne.fit_transform(Feats)
     # X_tsnes = pca.fit_transform(Feats)
     Y_tsnes = np.concatenate(Y_tsnes)
-    fig = px.scatter(x=X_tsnes[:, 0], y=X_tsnes[:, 1], color=Y_tsnes)
-    # fig = px.scatter_3d(x=X_tsnes[:, 0], y=X_tsnes[:, 1], z=X_tsnes[:, 2], color=Y_tsnes)
+    if n_components == 2:
+        fig = px.scatter(x=X_tsnes[:, 0], y=X_tsnes[:, 1], color=Y_tsnes, symbol=Y_tsnes)
+        # fig = go.Figure(data=go.Scatter(
+        #     x=X_tsnes[:, 0],
+        #     y=X_tsnes[:, 1],
+        #     mode='markers',
+        #     marker=dict(color=Y_tsnes, symbol=Y_tsnes)
+        # ))
+    elif n_components == 3:
+        fig = px.scatter_3d(x=X_tsnes[:, 0], y=X_tsnes[:, 1], z=X_tsnes[:, 2], color=Y_tsnes)
+        # fig = go.Figure(data=go.Scatter3d(
+        #     x=X_tsnes[:, 0],
+        #     y=X_tsnes[:, 1],
+        #     z=X_tsnes[:, 2],
+        #     mode='markers',
+        #     marker=dict(color=Y_tsnes)
+        # ))
     fig.show()
 
 
@@ -298,9 +328,9 @@ if __name__ == '__main__':
     # prepare_imagenet_fgsm_no_resize(1000)
     # prepare_cifar10_attack()
     # show_difference_imagenet()
-    show_difference_cifar10()
+    # show_difference_cifar10()
     # download_models()
     # extract_simclr()
     # extract_classifier()
-    # plot_tsne_cifar()
+    plot_tsne_cifar(n_components=2)
     
