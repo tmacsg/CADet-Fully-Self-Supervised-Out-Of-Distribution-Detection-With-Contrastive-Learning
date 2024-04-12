@@ -271,8 +271,8 @@ def plot_tsne_cifar(n_components=2):
     cfg = OmegaConf.load("configs/config_cifar.yml")
     tsne = TSNE(n_components,  perplexity=30, n_iter=5000)
     pca = PCA(n_components)
-    model = instantiate(cfg.classifier)
-    # model = instantiate(cfg.simclr)
+    # model = instantiate(cfg.classifier)
+    model = instantiate(cfg.simclr)
     model._load_weights()
     backbone = model.backbone
     # backbone = model
@@ -327,10 +327,10 @@ if __name__ == '__main__':
     # prepare_imagenet_fgsm(1000)
     # prepare_imagenet_fgsm_no_resize(1000)
     # prepare_cifar10_attack()
-    # show_difference_imagenet()
+    show_difference_imagenet()
     # show_difference_cifar10()
     # download_models()
     # extract_simclr()
     # extract_classifier()
-    plot_tsne_cifar(n_components=2)
+    # plot_tsne_cifar(n_components=3)
     

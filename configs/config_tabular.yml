@@ -1,0 +1,219 @@
+exp_name: tabular
+    
+simclr_tab:
+  _target_: models.simclr_tab.SimCLR_Tab
+  args:  
+    mode: train
+    num_classes: 2
+    input_dim: 4
+    feature_dim: 50
+    output_dim: 32
+    backbone_n_layer: 3
+    head_n_layer: 2
+    lr: 0.01
+    momentum: 0.9
+    weight_decay: 1e-6
+    max_epochs: 200
+    ckpt_path: gesture_phase_ckpts/tabular_simclr_epoch=1956_train_loss_ssl=1.5591.ckpt
+
+higgs_data_module:
+  _target_: utils.data_utils.HIGGSDataModule
+  args:
+    data_path: image_data/HIGGS/HIGGS_TST.pckl
+    mode: unsupervised
+    batch_size: 4096
+
+
+### dataset specific config ###
+breast_cancer:
+  num_classes: 2
+  input_dim: 30
+  feature_dim: 64
+  output_dim: 32
+  ckpt_path: breast_cancer_ckpts/tabular_simclr_epoch=1867_train_loss_ssl=0.9201.ckpt
+  train:
+    _target_: utils.data_utils.BreastCancer
+    train: True
+  test:
+    _target_: utils.data_utils.BreastCancer
+    train: False
+  data_module:
+    _target_: utils.data_utils.BreastCancerDataModule
+    args:
+      mode: unsupervised
+      batch_size: 128
+
+adult_income:
+  num_classes: 2
+  input_dim: 104
+  feature_dim: 256
+  output_dim: 128
+  ckpt_path: adult_income_ckpts/tabular_simclr_epoch=627_val_loss_ssl=2.0672.ckpt
+  train:
+    _target_: utils.data_utils.AdultIncome
+    data_path: tabular_data/adult_income/adult_income.csv
+    train: True
+  test:
+    _target_: utils.data_utils.AdultIncome
+    data_path: tabular_data/adult_income/adult_income.csv
+    train: False
+  data_module:
+    _target_: utils.data_utils.IncomeDataModule
+    args:
+      data_path: tabular_data/adult_income/adult_income.csv
+      mode: unsupervised
+      batch_size: 512
+
+### DONE
+gesture_phase:
+  num_classes: 5
+  input_dim: 50
+  feature_dim: 256
+  output_dim: 128
+  # ckpt_path: gesture_phase_ckpts/tabular_simclr_epoch=1682_train_loss_ssl=0.7951.ckpt
+  ckpt_path: gesture_phase_ckpts/tabular_simclr_epoch=1451_train_loss_ssl=0.9253.ckpt
+  train:
+    _target_: utils.data_utils.GesturePhase
+    data_path: tabular_data/gesture/
+    train: True
+  test:
+    _target_: utils.data_utils.GesturePhase
+    data_path: tabular_data/gesture/
+    train: False
+  data_module:
+    _target_: utils.data_utils.GesturePhaseDataModule
+    args:
+      data_path: tabular_data/gesture/
+      mode: unsupervised
+      batch_size: 256
+
+### DONE
+robot_wall:
+  num_classes: 4
+  input_dim: 24
+  feature_dim: 256
+  output_dim: 128
+  ckpt_path: robot_wall_ckpts/tabular_simclr_epoch=1988_train_loss_ssl=1.2895.ckpt
+  train:
+    _target_: utils.data_utils.RobotWall
+    data_path: tabular_data/robot_wall/sensor_readings_24.csv
+    train: True
+  test:
+    _target_: utils.data_utils.RobotWall
+    data_path: tabular_data/robot_wall/sensor_readings_24.csv
+    train: False
+  data_module:
+    _target_: utils.data_utils.RobotWallDataModule
+    args:
+      data_path: tabular_data/robot_wall/sensor_readings_24.csv
+      mode: unsupervised
+      batch_size: 256
+
+### DONE
+theorem:
+  num_classes: 6
+  input_dim: 51
+  feature_dim: 256
+  output_dim: 128
+  ckpt_path: theorem_ckpts/tabular_simclr_epoch=1617_train_loss_ssl=1.7340.ckpt
+  train:
+    _target_: utils.data_utils.Theorem
+    data_path: tabular_data/ml_prove
+    train: True
+  test:
+    _target_: utils.data_utils.Theorem
+    data_path: tabular_data/ml_prove
+    train: False
+  data_module:
+    _target_: utils.data_utils.TheoremDataModule
+    args:
+      data_path: tabular_data/ml_prove
+      mode: unsupervised
+      batch_size: 256
+
+### DONE
+obesity:
+  num_classes: 7
+  input_dim: 31
+  feature_dim: 128
+  output_dim: 64
+  ckpt_path: obesity_ckpts/tabular_simclr_epoch=1935_val_loss_ssl=1.5304.ckpt
+  train:
+    _target_: utils.data_utils.Obesity
+    data_path: tabular_data/obesity/ObesityDataSet_raw_and_data_sinthetic.csv
+    train: True
+  test:
+    _target_: utils.data_utils.Obesity
+    data_path: tabular_data/obesity/ObesityDataSet_raw_and_data_sinthetic.csv
+    train: False
+  data_module:
+    _target_: utils.data_utils.ObesityDataModule
+    args:
+      data_path: tabular_data/obesity/ObesityDataSet_raw_and_data_sinthetic.csv
+      mode: unsupervised
+      batch_size: 128
+
+### DONE
+ozone:
+  num_classes: 2
+  input_dim: 73
+  feature_dim: 256
+  output_dim: 128
+  ckpt_path: ozone_ckpts/tabular_simclr_epoch=1753_val_loss_ssl=0.8160.ckpt
+  train:
+    _target_: utils.data_utils.Ozone
+    data_path: tabular_data/ozone/Ozone.csv
+    train: True
+  test:
+    _target_: utils.data_utils.Ozone
+    data_path: tabular_data/ozone/Ozone.csv
+    train: False
+  data_module:
+    _target_: utils.data_utils.OzoneModule
+    args:
+      data_path: tabular_data/ozone/Ozone.csv
+      mode: unsupervised
+      batch_size: 128
+
+### DONE
+texture:
+  num_classes: 11
+  input_dim: 40
+  feature_dim: 256
+  output_dim: 128
+  ckpt_path: texture_ckpts/tabular_simclr_epoch=1840_val_loss_ssl=1.2623.ckpt
+  train:
+    _target_: utils.data_utils.Texture
+    data_path: tabular_data/texture/texture.arff
+    train: True
+  test:
+    _target_: utils.data_utils.Texture
+    data_path: tabular_data/texture/texture.arff
+    train: False
+  data_module:
+    _target_: utils.data_utils.TextureModule
+    args:
+      data_path: tabular_data/texture/texture.arff
+      mode: unsupervised
+      batch_size: 128
+
+dna:
+  num_classes: 3
+  input_dim: 360
+  feature_dim: 512
+  output_dim: 128
+  ckpt_path: dna_ckpts/tabular_simclr_epoch=704_val_loss_ssl=0.4395.ckpt
+  train:
+    _target_: utils.data_utils.DNA
+    data_path: tabular_data/dna/dna.arff
+    train: True
+  test:
+    _target_: utils.data_utils.DNA
+    data_path: tabular_data/dna/dna.arff
+    train: False
+  data_module:
+    _target_: utils.data_utils.DNAModule
+    args:
+      data_path: tabular_data/dna/dna.arff
+      mode: unsupervised
+      batch_size: 128

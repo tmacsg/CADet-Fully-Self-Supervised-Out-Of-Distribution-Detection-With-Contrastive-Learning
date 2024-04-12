@@ -1,4 +1,4 @@
-from typing import Tuple, Union, List, Optional
+from typing import Tuple, Union, List, Optional, Any
 from PIL import Image
 from torch import Tensor
 import pytorch_lightning as pl
@@ -18,6 +18,16 @@ import re
 from tqdm import tqdm
 import random
 import pickle
+from sklearn.preprocessing import StandardScaler
+from torch.distributions.uniform import Uniform
+from sklearn import datasets
+from sklearn.model_selection import train_test_split
+from sklearn import preprocessing
+from collections import Counter
+from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
+from sklearn.compose import ColumnTransformer
+import pandas as pd
+from scipy.io import arff
 
 class CADetTransform:
     def __init__(
@@ -65,6 +75,34 @@ class PixelFlick:
         noise = torch.randint(-self.scale, self.scale, image.shape)
         image =  np.clip(image + noise.numpy(), 0, 255).astype(np.uint8)
         return Image.fromarray(image)
+
+class Random_Noise:
+    def __init__(self, sigma=1):
+        self.sigma = sigma
+
+    def __call__(self, X):
+        noise = np.random.normal(0, self.sigma, len(X)).astype(np.float32)
+        return X + noise
+    
+class Random_Noise_Mul:
+    def __init__(self, sigma=0.2):
+        self.sigma = sigma
+
+    def __call__(self, X):
+        noise = np.random.normal(1, self.sigma, len(X)).astype(np.float32)
+        return X * noise
+    
+class Random_Mask:
+    def __init__(self, p=0.5):
+        self.p = p
+        
+    def __call__(self, X):
+        mask = np.random.binomial(1, 1-self.p, size=len(X)).astype(np.float32)
+        return X * mask
+class L2_Normalize: 
+    def __call__(self, X):
+        norm = torch.norm(X) + 1e-8
+        return X / norm
     
 class Convert:
     def __init__(self, mode='RGB'):
@@ -72,6 +110,10 @@ class Convert:
 
     def __call__(self, image):
         return image.convert(self.mode)
+    
+class ToTensor:
+    def __call__(self, X):
+        return torch.tensor(X)
 
 class CIFAR10_NPY(Dataset):
     """ load cifar dataset from .npy format
@@ -635,12 +677,12 @@ class MNISTDataModule(pl.LightningDataModule):
                     self.dataset_q = MNIST_FAKE(root=self.mnist_path_fake, transform=self.test_transform) 
                     
     def train_dataloader(self): 
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, 
-                          num_workers=8, pin_memory=True, drop_last=True, shuffle=True, persistent_workers=True) 
+        return DataLoader(self.train_dataset, shuffle=True, batch_size=self.batch_size, )
+                        #   num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True) 
     
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, 
-                          num_workers=8, pin_memory=True, drop_last=True, shuffle=False, persistent_workers=True) 
+        return DataLoader(self.val_dataset, shuffle=False, batch_size=self.batch_size, )
+                        #   num_workers=8, pin_memory=True, drop_last=True,  persistent_workers=True) 
         
     def test_dataloader(self):
         if self.mode == 'supervised':
@@ -656,3 +698,841 @@ class MNISTDataModule(pl.LightningDataModule):
             dataloader_q = DataLoader(self.dataset_q, batch_size=batch_size, sampler=sampler_q)           
             return CombinedLoader({'s': dataloader_s, 'q': dataloader_q})
         
+class HIGGS(Dataset):
+    def __init__(self, root, train=True, transform=None):
+        self.transform = transform
+        data_0, data_1 =  pickle.load(open(root, 'rb'))
+        
+        indices_0 = np.random.choice(data_0.shape[0], size=int(data_0.shape[0] * 0.8), replace=False)
+        data_0_train = data_0[indices_0]
+        data_0_test = np.delete(data_0, indices_0, axis=0)
+        
+        indices_1 = np.random.choice(data_1.shape[0], size=int(data_1.shape[0] * 0.8), replace=False)
+        data_1_train = data_1[indices_1]
+        data_1_test = np.delete(data_1, indices_0, axis=0)
+        
+        data_train = np.concatenate([data_0_train, data_1_train])
+        data_test = np.concatenate([data_0_test, data_1_test])
+
+        self.train_data = data_train[:, 0:-1].astype(np.float32)
+        self.train_labels = data_train[:, -1].astype(np.int64)
+        self.test_data = data_test[:, 0:-1].astype(np.float32)
+        self.test_labels = data_test[:, -1].astype(np.int64)
+
+        scaler = StandardScaler()
+        self.train_data = scaler.fit_transform(self.train_data)
+        self.test_data = scaler.transform(self.test_data)
+
+        if train:
+            self.data = self.train_data
+            self.labels = self.train_labels
+        else:
+            self.data = self.test_data
+            self.labels = self.test_labels
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0)      
+
+class RandomCrupt:
+    def __init__(self, features_low, features_high, corruption_rate, corruption_level=0.2):
+        delta = corruption_level * (torch.Tensor(features_high) - torch.Tensor(features_low))
+        self.marginals = Uniform(torch.Tensor(features_low) - delta - 1e-8, 
+                                 torch.Tensor(features_high) + delta + 1e-8)
+        self.corruption_rate = corruption_rate
+        
+    def __call__(self, x: Tensor):
+        corruption_mask = torch.rand_like(x) > self.corruption_rate
+        x_random = self.marginals.sample((1,)).squeeze(0)
+        x_corrupted = torch.where(corruption_mask, x_random, x)        
+        return x_corrupted
+
+class ContrastiveTransform_V2:
+    def __init__(self, transforms: List[Any]):
+        self.transforms = transforms
+        
+    def __call__(self, x):
+        return [transform(x) for transform in self.transforms]
+        
+class HIGGSDataModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.data_path = args.data_path
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = HIGGS(self.data_path, train=True)
+        self.dataset_test = HIGGS(self.data_path, train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            transforms = [ToTensor(),
+                          T.Compose([ToTensor(),
+                           RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])]
+            self.dataset_train.transform = ContrastiveTransform_V2([ToTensor(),
+                          T.Compose([ToTensor(),
+                           RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            self.dataset_test.transform = ContrastiveTransform_V2([ToTensor(),
+                          T.Compose([ToTensor(),
+                           RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train, batch_size=self.batch_size,
+                          num_workers=8, pin_memory=True, drop_last=True, shuffle=True, persistent_workers=True) 
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test, batch_size=self.batch_size, 
+                          num_workers=8, pin_memory=True, drop_last=True, shuffle=False, persistent_workers=True) 
+
+class BreastCancer(Dataset):
+    def __init__(self, train=True, transform=None):
+        self.train = train
+        self.transform = transform
+        data = datasets.load_breast_cancer(as_frame=True)
+        data, target = data["data"], data["target"]
+        train_data, test_data, train_target, test_target = train_test_split(
+            data, target, test_size=0.2, stratify=target, random_state=42
+        )
+        scaler = StandardScaler()
+        train_data = scaler.fit_transform(train_data.to_numpy())
+        test_data = scaler.transform(test_data.to_numpy())
+        
+        if train:
+            self.data = train_data.astype(np.float32)
+            self.labels = train_target.to_numpy().astype(np.int64)
+        else:
+            self.data = test_data.astype(np.float32)
+            self.labels = test_target.to_numpy().astype(np.int64)
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0) 
+    
+class BreastCancerDataModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = BreastCancer(train=True)
+        self.dataset_test = BreastCancer(train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            self.dataset_train.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            self.dataset_test.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+
+            # self.dataset_train.transform = ContrastiveTransform(view_transform=
+            #                                                     T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)]))
+            # self.dataset_test.transform = ContrastiveTransform(view_transform=
+            #                                                     T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)]))
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train,  shuffle=True, batch_size=self.batch_size,)
+                        #   num_workers=8, pin_memory=True, drop_last=True, shuffle=True, persistent_workers=True) 
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test,  shuffle=False, batch_size=self.batch_size, )
+                        #   num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True) 
+                        
+class AdultIncome(Dataset):
+    def __init__(self, data_path, train=True, transform=None):        
+        self.train = train
+        self.transform = transform
+        data, target = self._load_data(data_path)
+        train_data, test_data, train_target, test_target = train_test_split(
+            data, target, test_size=0.2, stratify=target, random_state=42
+        )
+               
+        if train:
+            self.data = train_data
+            self.labels = train_target
+        else:
+            self.data = test_data
+            self.labels = test_target
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0) 
+    
+    def _load_data(self, data_path):
+        df = pd.read_csv(data_path, na_values='?')
+        df = df.dropna()
+        last_ix = len(df.columns) - 1
+        X, y = df.drop(df.columns[last_ix], axis=1), df.iloc[:,last_ix]
+        cat_ix = X.select_dtypes(include=['object', 'bool']).columns
+        num_ix = X.select_dtypes(include=['int64', 'float64']).columns
+        
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), num_ix),
+                ('cat', OneHotEncoder(), cat_ix)
+            ])
+        X = preprocessor.fit_transform(X).toarray()
+        # X = pd.DataFrame(X.toarray())
+        # X = X.map(lambda x: np.tanh(x)).to_numpy()
+        y = LabelEncoder().fit_transform(y)
+        return X.astype(np.float32), y.astype(np.int64)
+    
+class IncomeDataModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = AdultIncome(data_path=args.data_path, train=True)
+        self.dataset_test = AdultIncome(data_path=args.data_path, train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            self.dataset_train.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            self.dataset_test.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train,  shuffle=True, batch_size=self.batch_size, drop_last=True)
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test,  shuffle=False, batch_size=self.batch_size, drop_last=True)
+                        
+class GesturePhase(Dataset):
+    def __init__(self, data_path, train=True, transform=None):        
+        self.train = train
+        self.transform = transform
+        data, target = self._load_data(data_path)
+        train_data, test_data, train_target, test_target = train_test_split(
+            data, target, test_size=0.2, stratify=target, random_state=42
+        )
+               
+        if train:
+            self.data = train_data
+            self.labels = train_target
+        else:
+            self.data = test_data
+            self.labels = test_target
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0) 
+    
+    def _load_data(self, data_path):
+        data_prefix = ['a1', 'a2', 'a3', 'b1', 'b3', 'c1', 'c3']
+        data_frames = []
+        for prefix in data_prefix:
+            df_raw = pd.read_csv(os.path.join(data_path, f"{prefix}_raw.csv") , skiprows=[1,2,3,4])
+            df_raw.drop('timestamp',axis=1,inplace=True)
+            df_raw.drop('phase',axis=1,inplace=True)
+            df_va3 = pd.read_csv(os.path.join(data_path, f"{prefix}_va3.csv"))
+            df_va3.rename(columns={'Phase': 'phase'}, inplace=True)
+            data_frames.append(pd.concat([df_raw, df_va3],axis=1))
+        df= pd.concat(data_frames)
+        last_ix = len(df.columns) - 1
+        X, y = df.drop(df.columns[last_ix], axis=1), df.iloc[:,last_ix]
+        
+        # X = X.map(lambda x: np.tanh(x)).to_numpy()
+        X = StandardScaler().fit_transform(X)
+        y = LabelEncoder().fit_transform(y)
+        return X.astype(np.float32), y.astype(np.int64)
+    
+class GesturePhaseDataModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = GesturePhase(data_path=args.data_path, train=True)
+        self.dataset_test = GesturePhase(data_path=args.data_path, train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            self.dataset_train.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([Random_Noise_Mul(), ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            self.dataset_test.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([Random_Noise_Mul(), ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train,  shuffle=True, batch_size=self.batch_size,)
+                        #   num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True) 
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test,  shuffle=False, batch_size=self.batch_size, )
+                        #   num_workers=8, pin_memory=True, drop_last=True, persistent_workers=True) 
+                        
+class RobotWall(Dataset):
+    def __init__(self, data_path, train=True, transform=None):        
+        self.train = train
+        self.transform = transform
+        data, target = self._load_data(data_path)
+        train_data, test_data, train_target, test_target = train_test_split(
+            data, target, test_size=0.2, stratify=target, random_state=42
+        )
+               
+        if train:
+            self.data = train_data
+            self.labels = train_target
+        else:
+            self.data = test_data
+            self.labels = test_target
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0) 
+    
+    def _load_data(self, data_path):
+        df= pd.read_csv(data_path)
+        last_ix = len(df.columns) - 1
+        X, y = df.drop(df.columns[last_ix], axis=1), df.iloc[:,last_ix]
+        
+        X = StandardScaler().fit_transform(X)
+        # X = pd.DataFrame(X)       
+        # X = X.map(lambda x: np.tanh(x)).to_numpy()
+        y = LabelEncoder().fit_transform(y)
+        return X.astype(np.float32), y.astype(np.int64)
+    
+class RobotWallDataModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = RobotWall(data_path=args.data_path, train=True)
+        self.dataset_test = RobotWall(data_path=args.data_path, train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            self.dataset_train.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            self.dataset_test.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train,  shuffle=True, batch_size=self.batch_size, drop_last=True)
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test,  shuffle=False, batch_size=self.batch_size, drop_last=True)
+                        
+class Theorem(Dataset):
+    def __init__(self, data_path, train=True, transform=None):        
+        self.train = train
+        self.transform = transform
+
+        train_data, test_data, train_target, test_target = self._load_data(data_path)
+               
+        if train:
+            self.data = train_data
+            self.labels = train_target
+        else:
+            self.data = test_data
+            self.labels = test_target
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0) 
+    
+    def _load_data(self, data_path):   
+        data_train = pd.read_csv(os.path.join(data_path, 'train.csv'), header=None)
+        data_val = pd.read_csv(os.path.join(data_path, 'validation.csv'), header=None)
+        data_test = pd.read_csv(os.path.join(data_path, 'test.csv'), header=None)
+        data_train = pd.concat([data_train, data_val])       
+        data_train = self._convert_label(data_train)
+        data_test = self._convert_label(data_test)
+              
+        last_ix = len(data_train.columns) - 1       
+        train_data, train_target =  data_train.drop(data_train.columns[last_ix], axis=1), data_train.iloc[:,last_ix]      
+        test_data, test_target = data_test.drop(data_test.columns[last_ix], axis=1), data_test.iloc[:,last_ix]
+        
+        scaler = StandardScaler()
+        train_data = scaler.fit_transform(train_data).astype(np.float32)
+        test_data = scaler.transform(test_data).astype(np.float32)
+        # train_data = train_data.map(lambda x: np.tanh(x)).to_numpy().astype(np.float32)
+        # test_data = test_data.map(lambda x: np.tanh(x)).to_numpy().astype(np.float32)
+
+        
+        return train_data, test_data, train_target.to_numpy(), test_target.to_numpy()
+    
+    def _convert_label(self, data_frame):
+        label_columns = data_frame.iloc[:, 51:57]
+        label_column_index = label_columns.eq(1).idxmax(axis=1) - 51
+        df = pd.concat([data_frame, label_column_index], ignore_index=True, axis=1)
+        df.drop(label_columns.columns, axis=1, inplace=True)
+        return df
+    
+class TheoremDataModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = Theorem(data_path=args.data_path, train=True)
+        self.dataset_test = Theorem(data_path=args.data_path, train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            transform = T.Compose([ToTensor(), RandomCrupt(-np.ones_like(self.dataset_train.features_low), np.ones_like(self.dataset_train.features_low), 0.6)])
+            # self.dataset_train.transform = ContrastiveTransform_V2([
+                # ToTensor(),
+            #     T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)]),
+            #     T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            # self.dataset_test.transform = ContrastiveTransform_V2([
+            #     # ToTensor(),
+            #     T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)]),
+            #     T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            self.dataset_train.transform = ContrastiveTransform(view_transform=transform)
+            self.dataset_test.transform = ContrastiveTransform(view_transform=transform)
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train,  shuffle=True, batch_size=self.batch_size, drop_last=True) 
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test,  shuffle=False, batch_size=self.batch_size, drop_last=True)
+    
+
+class Obesity(Dataset):
+    def __init__(self, data_path, train=True, transform=None):        
+        self.train = train
+        self.transform = transform
+        data, target = self._load_data(data_path)
+        train_data, test_data, train_target, test_target = train_test_split(
+            data, target, test_size=0.2, stratify=target, random_state=42
+        )
+               
+        if train:
+            self.data = train_data
+            self.labels = train_target
+        else:
+            self.data = test_data
+            self.labels = test_target
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0) 
+    
+    def _load_data(self, data_path):
+        df = pd.read_csv(data_path, na_values='?')
+        df = df.dropna()
+        last_ix = len(df.columns) - 1
+        X, y = df.drop(df.columns[last_ix], axis=1), df.iloc[:,last_ix]
+        cat_ix = X.select_dtypes(include=['object', 'bool']).columns
+        num_ix = X.select_dtypes(include=['int64', 'float64']).columns
+        
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), num_ix),
+                ('cat', OneHotEncoder(), cat_ix)
+            ])
+        X = preprocessor.fit_transform(X)
+        y = LabelEncoder().fit_transform(y)
+        return X.astype(np.float32), y.astype(np.int64)
+    
+class ObesityDataModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = Obesity(data_path=args.data_path, train=True)
+        self.dataset_test = Obesity(data_path=args.data_path, train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            self.dataset_train.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            self.dataset_test.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train,  shuffle=True, batch_size=self.batch_size, drop_last=True) 
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test,  shuffle=False, batch_size=self.batch_size, drop_last=True)
+    
+class Ozone(Dataset):
+    def __init__(self, data_path, train=True, transform=None):        
+        self.train = train
+        self.transform = transform
+        data, target = self._load_data(data_path)
+        train_data, test_data, train_target, test_target = train_test_split(
+            data, target, test_size=0.2, stratify=target, random_state=42
+        )
+               
+        if train:
+            self.data = train_data
+            self.labels = train_target
+        else:
+            self.data = test_data
+            self.labels = test_target
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0) 
+    
+    def _load_data(self, data_path):
+        df = pd.read_csv(data_path, na_values='?')
+        df = df.dropna()
+        last_ix = len(df.columns) - 1
+        X, y = df.drop(df.columns[last_ix], axis=1), df.iloc[:,last_ix]
+        cat_ix = X.select_dtypes(include=['object', 'bool']).columns
+        num_ix = X.select_dtypes(include=['int64', 'float64']).columns
+        
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), num_ix),
+                ('cat', OneHotEncoder(), cat_ix)
+            ])
+        X = preprocessor.fit_transform(X)
+        y = LabelEncoder().fit_transform(y)
+        return X.astype(np.float32), y.astype(np.int64)
+    
+class OzoneModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = Ozone(data_path=args.data_path, train=True)
+        self.dataset_test = Ozone(data_path=args.data_path, train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            self.dataset_train.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            self.dataset_test.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train,  shuffle=True, batch_size=self.batch_size, drop_last=True) 
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test,  shuffle=False, batch_size=self.batch_size, drop_last=True)
+    
+class Texture(Dataset):
+    def __init__(self, data_path, train=True, transform=None):        
+        self.train = train
+        self.transform = transform
+        data, target = self._load_data(data_path)
+        train_data, test_data, train_target, test_target = train_test_split(
+            data, target, test_size=0.2, stratify=target, random_state=42
+        )
+               
+        if train:
+            self.data = train_data
+            self.labels = train_target
+        else:
+            self.data = test_data
+            self.labels = test_target
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0) 
+    
+    def _load_data(self, data_path):
+        data, _ = arff.loadarff(data_path)   
+        df = pd.DataFrame(data)
+        df = df.dropna()
+        last_ix = len(df.columns) - 1
+        X, y = df.drop(df.columns[last_ix], axis=1), df.iloc[:,last_ix]
+        cat_ix = X.select_dtypes(include=['object', 'bool']).columns
+        num_ix = X.select_dtypes(include=['int64', 'float64']).columns
+        
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), num_ix),
+                ('cat', OneHotEncoder(), cat_ix)
+            ])
+        X = preprocessor.fit_transform(X)
+        y = LabelEncoder().fit_transform(y)
+        return X.astype(np.float32), y.astype(np.int64)
+    
+class TextureModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = Texture(data_path=args.data_path, train=True)
+        self.dataset_test = Texture(data_path=args.data_path, train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            self.dataset_train.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            self.dataset_test.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train,  shuffle=True, batch_size=self.batch_size, drop_last=True) 
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test,  shuffle=False, batch_size=self.batch_size, drop_last=True)
+    
+class DNA(Dataset):
+    def __init__(self, data_path, train=True, transform=None):        
+        self.train = train
+        self.transform = transform
+        data, target = self._load_data(data_path)
+        train_data, test_data, train_target, test_target = train_test_split(
+            data, target, test_size=0.2, stratify=target, random_state=42
+        )
+               
+        if train:
+            self.data = train_data
+            self.labels = train_target
+        else:
+            self.data = test_data
+            self.labels = test_target
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, self.labels[index]  
+    
+    @property
+    def features_low(self):
+        return self.data.min(axis=0)
+
+    @property
+    def features_high(self):
+        return self.data.max(axis=0) 
+    
+    def _load_data(self, data_path):
+        data, _ = arff.loadarff(data_path)   
+        df = pd.DataFrame(data)
+        df = df.dropna()
+        last_ix = len(df.columns) - 1
+        X, y = df.drop(df.columns[last_ix], axis=1), df.iloc[:,last_ix]
+        cat_ix = X.select_dtypes(include=['object', 'bool']).columns
+        num_ix = X.select_dtypes(include=['int64', 'float64']).columns
+        
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), num_ix),
+                ('cat', OneHotEncoder(), cat_ix)
+            ])
+        X = preprocessor.fit_transform(X)
+        # X = pd.DataFrame(X)       
+        # X = X.map(lambda x: np.tanh(x)).to_numpy()
+        y = LabelEncoder().fit_transform(y)
+        return X.astype(np.float32), y.astype(np.int64)
+    
+class DNAModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.mode = args.mode
+        assert self.mode in ['unsupervised', 'supervised']
+        self.dataset_train = DNA(data_path=args.data_path, train=True)
+        self.dataset_test = DNA(data_path=args.data_path, train=False)
+        self.batch_size = args.batch_size
+        
+    def setup(self, stage: str):
+        if self.mode == 'unsupervised':
+            self.dataset_train.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            self.dataset_test.transform = ContrastiveTransform_V2([
+                ToTensor(),
+                T.Compose([ToTensor(), RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+            # self.dataset_train.transform = ContrastiveTransform_V2([
+            #     ToTensor(),
+            #     T.Compose([Random_Noise_Mul(), Random_Mask(p=0.2), ToTensor(), 
+            #                RandomCrupt(self.dataset_train.features_low, self.dataset_train.features_high, 0.6)])])
+            
+            # self.dataset_test.transform = ContrastiveTransform_V2([
+            #     ToTensor(),
+            #     T.Compose([Random_Noise_Mul(), Random_Mask(p=0.2), ToTensor(), 
+            #                RandomCrupt(self.dataset_test.features_low, self.dataset_test.features_high, 0.6)])])
+            
+        elif self.mode == 'supervised':
+            self.dataset_train.transform = ToTensor()
+            self.dataset_test.transform = ToTensor()
+                           
+    def train_dataloader(self): 
+        return DataLoader(self.dataset_train,  shuffle=True, batch_size=self.batch_size, drop_last=True) 
+        
+    def val_dataloader(self):
+        return DataLoader(self.dataset_test,  shuffle=False, batch_size=self.batch_size, drop_last=True)

@@ -1,0 +1,26 @@
+exp_name: tabular
+    
+simclr_tab:
+  _target_: models.simclr_tab.SimCLR_Tab
+  args:  
+    mode: train
+    num_classes: 2
+    input_dim: 4
+    feature_dim: 50
+    output_dim: 32
+    backbone_n_layer: 3
+    head_n_layer: 2
+    lr: 0.01
+    momentum: 0.9
+    weight_decay: 1e-6
+    max_epochs: 200
+    ckpt_path: higgs_ckpts/tabular_simclr_epoch=156_train_loss_ssl=8.1963.ckpt
+
+higgs_data_module:
+  _target_: utils.data_utils.HIGGSDataModule
+  args:
+    data_path: image_data/HIGGS/HIGGS_TST.pckl
+    mode: unsupervised
+    batch_size: 4096
+
+

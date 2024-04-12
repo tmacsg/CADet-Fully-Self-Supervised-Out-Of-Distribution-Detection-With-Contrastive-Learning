@@ -8,6 +8,11 @@ import os
 import torch
 from lightly.models.utils import deactivate_requires_grad
 from utils.stat_utils import draw_roc_curve
+from sklearn.linear_model import LogisticRegression
+from sklearn.manifold import TSNE
+from sklearn.metrics import ConfusionMatrixDisplay, classification_report, confusion_matrix
+from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 
 def test_classifier_imagenet():
     cfg = OmegaConf.load('configs/config.yml')
@@ -147,8 +152,8 @@ def test_mmd_cifar():
     cfg = OmegaConf.load('configs/config_cifar.yml')
     cfg.cifar_data_module.args.mode = 'mmd'
     cfg.mmd.args.kernel = 'cosine'
-    cfg.mmd.args.clean_calib = True
-    cfg.mmd.args.image_set_q = 'cifar10_1'
+    cfg.mmd.args.clean_calib = False
+    cfg.mmd.args.image_set_q = 'fgsm'
     model = instantiate(cfg.mmd)
     data_module = instantiate(cfg.cifar_data_module)
     trainer = pl.Trainer(devices=1)
@@ -469,11 +474,263 @@ def test_cadet_ss_imagenet():
     # print(f'out distribution m_out: mean {m_outs_od.mean().item()} var {m_outs_od.var().item()}')
     # print(f'auroc: {auroc}')
 
+def eval_simclr_breast_cancer():
+    cfg = OmegaConf.load('configs/config_tabular.yml')
+    cfg.simclr_tab.args.mode = 'linear_eval'
+    cfg.simclr_tab.args.input_dim = 30
+    cfg.simclr_tab.args.feature_dim = 64
+    cfg.simclr_tab.args.output_dim = 32
+    cfg.simclr_tab.args.lr = 0.3
+    cfg.simclr_tab.args.max_epochs = 100
+    model = instantiate(cfg.simclr_tab)
+    cfg.breast_cancer_data_module.args.mode = 'supervised'
+    data_module = instantiate(cfg.breast_cancer_data_module)
+    checkpoint_callback = ModelCheckpoint(filename=cfg.exp_name + '_simclr_eval_' +'{epoch:02d}_{val_acc_cls:.4f}',
+                                          dirpath="breast_cancer_ckpts", save_top_k=1, save_last=True,
+                                          monitor="val_acc_cls", mode='max')
+    lr_monitor_callback = LearningRateMonitor(logging_interval='step')
+    n_devices = 1
+    accelerator = 'gpu'
+    logger = TensorBoardLogger(save_dir=f'{cfg.exp_name}_log')
 
+    trainer = pl.Trainer(devices=n_devices, accelerator=accelerator,
+                          max_epochs = cfg.simclr_tab.args.max_epochs,
+                          logger = logger,
+                          callbacks=[lr_monitor_callback, checkpoint_callback])
+    trainer.fit(model, data_module)
+
+def eval_simclr_income():
+    cfg = OmegaConf.load('configs/config_tabular.yml')
+    cfg.simclr_tab.args.mode = 'linear_eval'
+    cfg.simclr_tab.args.input_dim = 104
+    cfg.simclr_tab.args.feature_dim = 256
+    cfg.simclr_tab.args.output_dim = 128
+    cfg.simclr_tab.args.lr = 0.01
+    cfg.simclr_tab.args.max_epochs = 100
+    model = instantiate(cfg.simclr_tab)
+    cfg.income_data_module.args.mode = 'supervised'
+    cfg.income_data_module.args.batch_size = 128
+    data_module = instantiate(cfg.income_data_module)
+    checkpoint_callback = ModelCheckpoint(filename=cfg.exp_name + '_simclr_eval_' +'{epoch:02d}_{val_acc_cls:.4f}',
+                                          dirpath="income_ckpts", save_top_k=1, save_last=True,
+                                          monitor="val_acc_cls", mode='max')
+    lr_monitor_callback = LearningRateMonitor(logging_interval='step')
+    n_devices = 1
+    accelerator = 'gpu'
+    logger = TensorBoardLogger(save_dir=f'{cfg.exp_name}_log')
+
+    trainer = pl.Trainer(devices=n_devices, accelerator=accelerator,
+                          max_epochs = cfg.simclr_tab.args.max_epochs,
+                          logger = logger,
+                          callbacks=[lr_monitor_callback, checkpoint_callback])
+    trainer.fit(model, data_module)
+    
+def eval_simclr_gesture_phase():
+    cfg = OmegaConf.load('configs/config_tabular.yml')
+    cfg.simclr_tab.args.mode = 'linear_eval'
+    cfg.simclr_tab.args.num_classes = 5
+    cfg.simclr_tab.args.input_dim = 50
+    cfg.simclr_tab.args.feature_dim = 256
+    cfg.simclr_tab.args.output_dim = 128
+    cfg.simclr_tab.args.lr = 0.01
+    cfg.simclr_tab.args.max_epochs = 200
+    model = instantiate(cfg.simclr_tab)
+    cfg.gesture_phase_data_module.args.mode = 'supervised'
+    data_module = instantiate(cfg.gesture_phase_data_module)
+    checkpoint_callback = ModelCheckpoint(filename=cfg.exp_name + '_simclr_eval_' +'{epoch:02d}_{val_acc_cls:.4f}',
+                                          dirpath="gesture_phase_ckpts", save_top_k=1, save_last=True,
+                                          monitor="val_acc_cls", mode='max')
+    lr_monitor_callback = LearningRateMonitor(logging_interval='step')
+    n_devices = 1
+    accelerator = 'gpu'
+    logger = TensorBoardLogger(save_dir=f'{cfg.exp_name}_log')
+
+    trainer = pl.Trainer(devices=n_devices, accelerator=accelerator,
+                          max_epochs = cfg.simclr_tab.args.max_epochs,
+                          logger = logger,
+                          callbacks=[lr_monitor_callback, checkpoint_callback])
+    trainer.fit(model, data_module)
+    
+def eval_simclr_robot_wall():
+    cfg = OmegaConf.load('configs/config_tabular.yml')
+    cfg.simclr_tab.args.mode = 'linear_eval'
+    cfg.simclr_tab.args.num_classes = 4
+    cfg.simclr_tab.args.input_dim = 24
+    cfg.simclr_tab.args.feature_dim = 256
+    cfg.simclr_tab.args.output_dim = 128
+    cfg.simclr_tab.args.lr = 0.01
+    cfg.simclr_tab.args.max_epochs = 200
+    model = instantiate(cfg.simclr_tab)
+    cfg.robot_wall_data_module.args.mode = 'supervised'
+    cfg.robot_wall_data_module.args.batch_size = 128
+    data_module = instantiate(cfg.robot_wall_data_module)
+    checkpoint_callback = ModelCheckpoint(filename=cfg.exp_name + '_simclr_eval_' +'{epoch:02d}_{val_acc_cls:.4f}',
+                                          dirpath="robot_wall_ckpts", save_top_k=1, save_last=True,
+                                          monitor="val_acc_cls", mode='max')
+    lr_monitor_callback = LearningRateMonitor(logging_interval='step')
+    n_devices = 1
+    accelerator = 'gpu'
+    logger = TensorBoardLogger(save_dir=f'{cfg.exp_name}_log')
+
+    trainer = pl.Trainer(devices=n_devices, accelerator=accelerator,
+                          max_epochs = cfg.simclr_tab.args.max_epochs,
+                          logger = logger,
+                          callbacks=[lr_monitor_callback, checkpoint_callback])
+    trainer.fit(model, data_module)
+    
+    
+
+def eval_simclr_theorem():
+    cfg = OmegaConf.load('configs/config_tabular.yml')
+    cfg.simclr_tab.args.mode = 'linear_eval'
+    cfg.simclr_tab.args.num_classes = 6
+    cfg.simclr_tab.args.input_dim = 51
+    cfg.simclr_tab.args.feature_dim = 256
+    cfg.simclr_tab.args.output_dim = 128
+    cfg.simclr_tab.args.lr = 0.001
+    cfg.simclr_tab.args.max_epochs = 200
+    model = instantiate(cfg.simclr_tab)
+    cfg.theorem_data_module.args.mode = 'supervised'
+    cfg.theorem_data_module.args.batch_size = 64
+    data_module = instantiate(cfg.theorem_data_module)
+    checkpoint_callback = ModelCheckpoint(filename=cfg.exp_name + '_simclr_eval_' +'{epoch:02d}_{val_acc_cls:.4f}',
+                                          dirpath="theorem_ckpts", save_top_k=1, save_last=True,
+                                          monitor="val_acc_cls", mode='max')
+    lr_monitor_callback = LearningRateMonitor(logging_interval='step')
+    n_devices = 1
+    accelerator = 'gpu'
+    logger = TensorBoardLogger(save_dir=f'{cfg.exp_name}_log')
+
+    trainer = pl.Trainer(devices=n_devices, accelerator=accelerator,
+                          max_epochs = cfg.simclr_tab.args.max_epochs,
+                          logger = logger,
+                          callbacks=[lr_monitor_callback, checkpoint_callback])
+    trainer.fit(model, data_module)
+
+def eval_simclr_tabular():
+    dataset_name = 'adult_income'
+    assert dataset_name in ['breast_cancer', 'adult_income', 'gesture_phase', 'robot_wall', 
+                            'theorem', 'obesity', 'ozone', 'texture', 'dna']
+    cfg = OmegaConf.load('configs/config_tabular.yml')
+    dataset_configs = {
+        'breast_cancer': cfg.breast_cancer,
+        'adult_income': cfg.adult_income,
+        'gesture_phase': cfg.gesture_phase,
+        'robot_wall': cfg.robot_wall,
+        'theorem': cfg.theorem,
+        'obesity': cfg.obesity,
+        'ozone': cfg.ozone,
+        'texture': cfg.texture,
+        'dna': cfg.dna
+    }
+    dataset_config = dataset_configs[dataset_name]
+    dataset_config.data_module.args.mode = 'supervised'
+    cfg.simclr_tab.args.mode = 'linear_eval'
+    cfg.simclr_tab.args.num_classes = dataset_config.num_classes
+    cfg.simclr_tab.args.input_dim = dataset_config.input_dim
+    cfg.simclr_tab.args.feature_dim = dataset_config.feature_dim
+    cfg.simclr_tab.args.output_dim = dataset_config.output_dim
+    cfg.simclr_tab.args.ckpt_path = dataset_config.ckpt_path
+    cfg.simclr_tab.args.max_epochs = 200
+    cfg.simclr_tab.args.lr = 0.3
+    
+    model = instantiate(cfg.simclr_tab)
+    data_module = instantiate(dataset_config.data_module)
+    checkpoint_callback = ModelCheckpoint(filename=cfg.exp_name + '_simclr_eval_' +'{epoch:02d}_{val_acc_cls:.4f}',
+                                          dirpath=f"{dataset_name}_ckpts", save_top_k=1, save_last=True,
+                                          monitor="val_acc_cls", mode='max')
+    lr_monitor_callback = LearningRateMonitor(logging_interval='step')
+    n_devices = 1
+    accelerator = 'gpu'
+    logger = TensorBoardLogger(save_dir=f'{cfg.exp_name}_log')
+
+    trainer = pl.Trainer(devices=n_devices, accelerator=accelerator,
+                          max_epochs = cfg.simclr_tab.args.max_epochs,
+                          logger = logger,
+                          callbacks=[lr_monitor_callback, checkpoint_callback])
+    trainer.fit(model, data_module)
+
+def logistic_regression():
+    dataset_name = 'robot_wall'
+    assert dataset_name in ['breast_cancer', 'adult_income', 'gesture_phase', 'robot_wall', 
+                            'theorem', 'obesity', 'ozone', 'texture', 'dna']
+    cfg = OmegaConf.load('configs/config_tabular.yml')
+    dataset_configs = {
+        'breast_cancer': cfg.breast_cancer,
+        'adult_income': cfg.adult_income,
+        'gesture_phase': cfg.gesture_phase,
+        'robot_wall': cfg.robot_wall,
+        'theorem': cfg.theorem,
+        'obesity': cfg.obesity,
+        'ozone': cfg.ozone,
+        'texture': cfg.texture,
+        'dna': cfg.dna
+    }
+    dataset_config = dataset_configs[dataset_name]
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    cfg.simclr_tab.args.num_classes = dataset_config.num_classes
+    cfg.simclr_tab.args.input_dim = dataset_config.input_dim
+    cfg.simclr_tab.args.feature_dim = dataset_config.feature_dim
+    cfg.simclr_tab.args.output_dim = dataset_config.output_dim
+    cfg.simclr_tab.args.ckpt_path = dataset_config.ckpt_path
+    model = instantiate(cfg.simclr_tab)
+    model._load_weights()
+    deactivate_requires_grad(model)
+    backbone = model.backbone
+    backbone.to(device)
+    dataset_train = instantiate(dataset_config.train)
+    dataset_test = instantiate(dataset_config.test)
+    train_data, train_target = dataset_train[:]
+    test_data, test_target = dataset_test[:]
+    X_train = torch.tensor(train_data).to(device)
+    X_test = torch.tensor(test_data).to(device)
+    train_embeddings = backbone(X_train).cpu()
+    test_embeddings = backbone(X_test).cpu()
+    
+    ### raw feature regression
+    clf = LogisticRegression()
+    clf.fit(train_data, train_target)
+    predictions = clf.predict(test_data)
+    print(classification_report(test_target, predictions))
+    cm = confusion_matrix(test_target, predictions)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+    fig1, ax = plt.subplots(figsize=(5, 5))
+    fig1.suptitle("Raw Features Logistic Regression")
+    disp.plot(ax=ax)
+    
+    ### embeddings regression
+    clf.fit(train_embeddings, train_target)
+    predictions = clf.predict(test_embeddings)
+    print(classification_report(test_target, predictions))
+    cm = confusion_matrix(test_target, predictions)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+    fig2, ax = plt.subplots(figsize=(5, 5))
+    fig2.suptitle("Embeddings Logistic Regression")
+    disp.plot(ax=ax)
+    
+    ### tSNE for raw features
+    # tsne1 = TSNE(n_components=2)
+    # reduced1 = tsne1.fit_transform(train_data)
+    # positive = train_target == 1
+    # fig3, ax3 = plt.subplots(figsize=(5, 5))
+    # fig3.suptitle("Raw Feature tSNE")
+    # ax3.scatter(reduced1[positive, 0], reduced1[positive, 1], label="positive")
+    # ax3.scatter(reduced1[~positive, 0], reduced1[~positive, 1], label="negative")
+    
+    ### tSNE for embedding
+    # tsne = TSNE(n_components=2)
+    # reduced = tsne.fit_transform(train_embeddings)
+    # positive = train_target == 1
+    # fig4, ax4 = plt.subplots(figsize=(5, 5))
+    # fig4.suptitle("Embeddings tSNE")
+    # ax4.scatter(reduced[positive, 0], reduced[positive, 1], label="positive")
+    # ax4.scatter(reduced[~positive, 0], reduced[~positive, 1], label="negative")
+    plt.legend()
+    plt.show()
 
 if __name__ == '__main__':
+    pl.seed_everything(42)
     os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-    # pl.seed_everything(0)
     # test_classifier_cifar()
     # test_simclr_cifar()
     # test_mmd_cifar()
@@ -481,7 +738,7 @@ if __name__ == '__main__':
     
     # test_classifier_mnist()
     # eval_simclr_mnist()
-    test_mmd_mnist()
+    # test_mmd_mnist()
     
     # test_classifier_imagenet()
     # test_simclr_imagenet()
@@ -490,4 +747,10 @@ if __name__ == '__main__':
     
     # test_cadet_ss_cifar()
     # test_cadet_ss_imagenet()
-    
+    # eval_simclr_breast_cancer()
+    # eval_simclr_income()
+    # eval_simclr_gesture_phase()
+    # eval_simclr_robot_wall()
+    # eval_simclr_theorem()
+    # eval_simclr_tabular()
+    logistic_regression()

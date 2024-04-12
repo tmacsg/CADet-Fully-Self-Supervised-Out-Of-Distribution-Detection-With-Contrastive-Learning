@@ -15,15 +15,29 @@ develop-eggs/
 dist/
 downloads/
 CADet_Calib/
+higgs_ckpts/
+obesity_ckpts/
+ozone_ckpts/
+adult_income_ckpts/
+dna_ckpts/
+texture_ckpts/
+two_sample_test_results/
 Features/
 image_data/
+tabular_data/
 imagenet_ckpts/
 cifar_ckpts/
 mnist_ckpts/
+breast_cancer_ckpts/
+gesture_phase_ckpts/
+income_ckpts/
+robot_wall_ckpts/
+theorem_ckpts/
 cifar_log/
 mnist_log/
 lightning_logs/
 imagenet_log/
+tabular_log/
 eggs/
 .eggs/
 lib/
@@ -171,3 +185,4 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 /test.ipynb
+/test2.ipynb
